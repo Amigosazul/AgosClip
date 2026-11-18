@@ -53,6 +53,7 @@ internal static class SelfTest
             ClipboardTests(app);
             Seed(app);
             Snapshots(outDir);
+            if (Environment.GetEnvironmentVariable("AGOSCLIP_UPDATE_TEST") == "1") UpdateTest();
         }
         catch (Exception ex)
         {
@@ -316,5 +317,22 @@ internal static class SelfTest
             }
         }
         Check(true, "snapshots rendered");
+    }
+
+    /// <summary>Live check against GitHub Releases (opt-in: needs network). Downloads and verifies, never installs.</summary>
+    static void UpdateTest()
+    {
+        var t = Updater.CheckAsync();
+        while (!t.IsCompleted) Pump(100);
+        var u = t.Result;
+        Check(u != null, $"update check finds a newer release than {Updater.Current} ({u?.Version})");
+        if (u == null) return;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var d = Updater.DownloadAsync(u, null);
+        while (!d.IsCompleted) Pump(200);
+        if (d.IsFaulted) { Check(false, "download: " + d.Exception!.InnerException!.Message); return; }
+        Check(File.Exists(d.Result) && new FileInfo(d.Result).Length == u.Size,
+            $"installer downloaded and SHA-256 verified ({u.Size / 1048576.0:0.#} MB in {sw.Elapsed.TotalSeconds:0} s)");
+        File.Delete(d.Result);
     }
 }

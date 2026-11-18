@@ -24,7 +24,10 @@ public static class Updater
     public static string ReleasesPage => $"https://github.com/{Repo}/releases";
 
     // must be initialised before Http (CreateClient reads it)
-    public static Version Current { get; } = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
+    // AGOSCLIP_FAKE_VERSION lets the self-test pretend to be an older build
+    public static Version Current { get; } =
+        Version.TryParse(Environment.GetEnvironmentVariable("AGOSCLIP_FAKE_VERSION"), out var fake) ? fake
+        : Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
 
     static readonly HttpClient Http = CreateClient();
 
