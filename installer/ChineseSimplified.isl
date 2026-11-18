@@ -1,0 +1,91 @@
+﻿; Simplified Chinese messages for the AgosClip installer.
+; Only the strings this installer shows are translated; the rest fall back to Default.isl.
+
+[LangOptions]
+LanguageName=简体中文
+LanguageID=$0804
+LanguageCodePage=936
+DialogFontName=Microsoft YaHei UI
+WelcomeFontName=Microsoft YaHei UI
+
+[Messages]
+SetupAppTitle=安装
+SetupWindowTitle=安装 - %1
+UninstallAppTitle=卸载
+UninstallAppFullTitle=卸载 %1
+ConfirmTitle=确认
+SetupAlreadyRunning=安装程序已经在运行。
+WinVersionTooLowError=此程序需要 %1 %2 或更高版本。
+SetupAppRunningError=检测到 %1 正在运行。%n%n请先关闭它，然后点“确定”继续，或点“取消”退出。
+UninstallAppRunningError=检测到 %1 正在运行。%n%n请先关闭它，然后点“确定”继续，或点“取消”退出。
+ExitSetupTitle=退出安装
+ExitSetupMessage=安装还没有完成。现在退出的话，程序不会被安装。%n%n以后可以再运行安装程序完成安装。%n%n确定要退出吗？
+AboutSetupMenuItem=关于安装程序(&A)...
+ButtonBack=< 上一步(&B)
+ButtonNext=下一步(&N) >
+ButtonInstall=安装(&I)
+ButtonOK=确定
+ButtonCancel=取消
+ButtonYes=是(&Y)
+ButtonYesToAll=全是(&A)
+ButtonNo=否(&N)
+ButtonNoToAll=全否(&O)
+ButtonFinish=完成(&F)
+ButtonBrowse=浏览(&B)...
+ButtonWizardBrowse=浏览(&R)...
+ButtonNewFolder=新建文件夹(&M)
+SelectLanguageTitle=选择安装语言
+SelectLanguageLabel=选择安装时使用的语言。
+WelcomeLabel1=欢迎安装 [name]
+WelcomeLabel2=将在你的电脑上安装 [name/ver]。%n%n安装后按 Win+V 就能打开剪贴板历史，可以按日期找到以前复制过的文字和图片。所有记录只保存在本机。
+WizardSelectDir=选择安装位置
+SelectDirDesc=要把 [name] 安装到哪里？
+SelectDirLabel3=安装程序会把 [name] 安装到下面的文件夹。
+SelectDirBrowseLabel=点“下一步”继续。要换一个文件夹，点“浏览”。
+DiskSpaceGBLabel=至少需要 [gb] GB 可用磁盘空间。
+DiskSpaceMBLabel=至少需要 [mb] MB 可用磁盘空间。
+DirExistsTitle=文件夹已存在
+DirExists=文件夹：%n%n%1%n%n已经存在。仍然安装到这个文件夹吗？
+WizardSelectTasks=选择附加任务
+SelectTasksDesc=要执行哪些附加任务？
+SelectTasksLabel2=选择安装 [name] 时要执行的附加任务，然后点“下一步”。
+WizardSelectProgramGroup=选择开始菜单文件夹
+NoProgramGroupCheck2=不创建开始菜单文件夹(&D)
+WizardReady=准备安装
+ReadyLabel1=已经准备好在你的电脑上安装 [name]。
+ReadyLabel2a=点“安装”开始安装；要检查或修改设置，点“上一步”。
+ReadyLabel2b=点“安装”开始安装。
+ReadyMemoDir=安装位置：
+ReadyMemoGroup=开始菜单文件夹：
+ReadyMemoTasks=附加任务：
+WizardPreparing=正在准备安装
+PreparingDesc=正在准备在你的电脑上安装 [name]。
+ApplicationsFound=下面这些程序正在使用需要更新的文件，建议让安装程序自动关闭它们。
+ApplicationsFound2=下面这些程序正在使用需要更新的文件，建议让安装程序自动关闭它们。安装完成后会尝试重新启动这些程序。
+CloseApplications=自动关闭这些程序(&A)
+DontCloseApplications=不关闭(&D)
+ErrorCloseApplications=安装程序没能自动关闭所有程序。建议先手动关闭它们再继续。
+WizardInstalling=正在安装
+InstallingLabel=正在安装 [name]，请稍候。
+FinishedHeadingLabel=[name] 安装完成
+FinishedLabelNoIcons=[name] 已经安装到你的电脑上。
+FinishedLabel=[name] 已经安装到你的电脑上。可以从开始菜单打开它。
+ClickFinish=点“完成”退出安装程序。
+RunEntryExec=启动 %1
+StatusClosingApplications=正在关闭程序...
+StatusExtractFiles=正在解压文件...
+StatusCreateIcons=正在创建快捷方式...
+StatusCreateRegistryEntries=正在写入注册表...
+StatusRunProgram=正在完成安装...
+ConfirmUninstall=确定要完全卸载 %1 吗？
+UninstallStatusLabel=正在从你的电脑上卸载 %1，请稍候。
+UninstalledAll=%1 已经从你的电脑上卸载。
+UninstalledAndNeedsRestart=需要重启电脑才能完成 %1 的卸载。%n%n现在重启吗？
+WizardUninstalling=卸载状态
+StatusUninstalling=正在卸载 %1...
+ShutdownBlockReasonInstallingApp=正在安装 %1。
+ShutdownBlockReasonUninstallingApp=正在卸载 %1。
+
+[CustomMessages]
+AdditionalIcons=附加快捷方式：
+CreateDesktopIcon=创建桌面快捷方式(&D)
