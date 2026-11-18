@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -77,37 +78,67 @@ public sealed class ClipboardMonitor : IDisposable
         catch (Exception ex) { App.Log("capture failed: " + ex); }
     }
 
-    void CaptureCore()
+    void CaptureCore() => CaptureCore(retry: true);
+
+    /// <summary>
+    /// One diagnostic line per clipboard event: format names, owner app and what was done. Never content.
+    /// </summary>
+    static void Diag(string? source, string[] formats, string what) =>
+        App.Log($"clip [{source ?? "?"}] {{{string.Join(", ", formats)}}} → {what}");
+
+    void CaptureCore(bool retry)
     {
         if (App.Paused) return;
         var data = GetData();
-        if (data == null) return;
+        string? source = SourceApp(out bool fromUs);
+        string who = fromUs ? "self" : source ?? "?";
+        if (data == null) { App.Log($"clip [{source ?? "?"}] → clipboard locked, skipped"); return; }
+        string[] formats;
+        try { formats = data.GetFormats(false); } catch { formats = Array.Empty<string>(); }
+        if (formats.Length == 0) return; // clipboard was emptied (apps do this right before writing)
 
         // Respect apps (password managers etc.) that ask clipboard history to skip their content.
-        if (Has(data, "ExcludeClipboardContentFromMonitorProcessing") || Has(data, "Clipboard Viewer Ignore")) return;
+        foreach (var flag in new[] { "ExcludeClipboardContentFromMonitorProcessing", "Clipboard Viewer Ignore" })
+            if (Has(data, flag)) { Diag(who, formats, "skipped: " + flag); return; }
         if (Get(data, "CanIncludeInClipboardHistory") is MemoryStream ms && ms.Length >= 4)
         {
             var b = new byte[4];
             ms.Read(b, 0, 4);
-            if (BitConverter.ToInt32(b, 0) == 0) return;
+            if (BitConverter.ToInt32(b, 0) == 0) { Diag(who, formats, "skipped: CanIncludeInClipboardHistory=0"); return; }
         }
 
-        string? source = SourceApp(out bool fromUs);
-
-        if (Has(data, DataFormats.UnicodeText) && Get(data, DataFormats.UnicodeText) is string text)
+        bool hasImage = formats.Any(f => f is "PNG" or "image/png" or "DeviceIndependentBitmap" or "Format17" or "Bitmap" or "System.Drawing.Bitmap");
+        var text = Has(data, DataFormats.UnicodeText) ? Get(data, DataFormats.UnicodeText) as string : null;
+        if (!string.IsNullOrWhiteSpace(text))
         {
-            if (string.IsNullOrWhiteSpace(text) || text.Length > MaxTextChars) return;
-            var hash = Store.TextHash(text);
-            _store.Upsert(ClipKind.Text, hash, text, null, null, 0, 0, fromUs ? null : source);
+            if (text.Length > MaxTextChars) { Diag(who, formats, $"skipped: text too long ({text.Length})"); return; }
+            _store.Upsert(ClipKind.Text, Store.TextHash(text), text, null, null, 0, 0, fromUs ? null : source);
+            Diag(who, formats, $"text ({text.Length} chars)");
             return;
         }
+        // Empty/whitespace text next to a picture (some screenshot tools do this) → record the picture.
 
-        if (!_settings().RecordImages) return;
-        var img = ReadImage(data);
-        if (img == null || (long)img.PixelWidth * img.PixelHeight > MaxImagePixels) return;
+        if (!hasImage) { Diag(who, formats, "nothing to record (no text or image)"); return; }
+        if (!_settings().RecordImages) { Diag(who, formats, "skipped: 记录图片 is off"); return; }
+        var img = ReadImage(data, out var why);
+        if (img == null)
+        {
+            if (retry)
+            {
+                // delayed rendering: the owner may still be producing the bitmap; try once more shortly
+                Diag(who, formats, "image not readable yet (" + why + "), retrying");
+                var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+                t.Tick += (_, _) => { t.Stop(); try { CaptureCore(retry: false); } catch (Exception ex) { App.Log("capture retry: " + ex); } };
+                t.Start();
+            }
+            else Diag(who, formats, "image FAILED: " + why);
+            return;
+        }
+        if ((long)img.PixelWidth * img.PixelHeight > MaxImagePixels) { Diag(who, formats, $"skipped: image too large {img.PixelWidth}x{img.PixelHeight}"); return; }
         img.Freeze();
         var src = fromUs ? null : source;
         var disp = Dispatcher.CurrentDispatcher;
+        Diag(who, formats, $"image {img.PixelWidth}x{img.PixelHeight}");
         Task.Run(() =>
         {
             try
@@ -164,31 +195,74 @@ public sealed class ClipboardMonitor : IDisposable
         File.Move(tmp, path, true);
     }
 
-    static BitmapSource? ReadImage(IDataObject data)
+    static Stream? AsStream(object? o) => o switch
     {
-        try
+        MemoryStream m => m,
+        byte[] bytes => new MemoryStream(bytes),
+        Stream st => st,
+        _ => null,
+    };
+
+    /// <summary>Tries every common clipboard picture format; <paramref name="why"/> says what failed.</summary>
+    static BitmapSource? ReadImage(IDataObject data, out string why)
+    {
+        var errors = new System.Collections.Generic.List<string>();
+        foreach (var fmt in new[] { "PNG", "image/png" })
         {
-            if (Has(data, "PNG") && Get(data, "PNG") is MemoryStream png)
+            try
             {
-                png.Position = 0;
-                var dec = new PngBitmapDecoder(png, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-                return dec.Frames[0];
+                if (Has(data, fmt) && AsStream(Get(data, fmt)) is { } png)
+                {
+                    png.Position = 0;
+                    var dec = BitmapDecoder.Create(png, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                    why = "";
+                    return dec.Frames[0];
+                }
             }
+            catch (Exception ex) { errors.Add($"{fmt}: {ex.GetType().Name} {ex.Message}"); }
         }
-        catch { }
+        foreach (var fmt in new[] { DataFormats.Dib, "Format17" /* CF_DIBV5 */ })
+        {
+            try
+            {
+                if (Has(data, fmt) && AsStream(Get(data, fmt)) is MemoryStream dib)
+                {
+                    var bmp = DecodeDib(dib.ToArray());
+                    if (bmp != null) { why = ""; return bmp; }
+                    errors.Add(fmt + ": too short");
+                }
+            }
+            catch (Exception ex) { errors.Add($"{fmt}: {ex.GetType().Name} {ex.Message}"); }
+        }
         try
         {
-            if (Has(data, DataFormats.Dib) && Get(data, DataFormats.Dib) is MemoryStream dib)
-                return DecodeDib(dib.ToArray());
+            if (Has(data, DataFormats.Bitmap) && Get(data, DataFormats.Bitmap) is BitmapSource bs) { why = ""; return bs; }
         }
-        catch { }
+        catch (Exception ex) { errors.Add($"Bitmap: {ex.GetType().Name} {ex.Message}"); }
         try
         {
-            if (Has(data, DataFormats.Bitmap) && Get(data, DataFormats.Bitmap) is BitmapSource bs) return bs;
+            // GDI+ path: understands DIB variants the WPF BMP decoder rejects
+            if (System.Windows.Forms.Clipboard.GetImage() is System.Drawing.Bitmap gdi)
+            {
+                using (gdi)
+                {
+                    var h = gdi.GetHbitmap();
+                    try
+                    {
+                        why = "";
+                        return Imaging.CreateBitmapSourceFromHBitmap(h, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+                    }
+                    finally { DeleteObject(h); }
+                }
+            }
+            errors.Add("GDI+: no image");
         }
-        catch { }
+        catch (Exception ex) { errors.Add($"GDI+: {ex.GetType().Name} {ex.Message}"); }
+        why = string.Join("; ", errors);
         return null;
     }
+
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr h);
 
     /// <summary>Turns a CF_DIB blob into a bitmap by prepending a BITMAPFILEHEADER.</summary>
     static BitmapSource? DecodeDib(byte[] dib)

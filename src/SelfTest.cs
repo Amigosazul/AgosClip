@@ -154,10 +154,34 @@ internal static class SelfTest
             Pump(700);
         }
 
+        // Screenshot-tool style clipboards: DIB only (no PNG), plus an empty text format next to it.
+        static MemoryStream Dib(BitmapSource b)
+        {
+            var enc = new BmpBitmapEncoder();
+            enc.Frames.Add(BitmapFrame.Create(b));
+            using var ms = new MemoryStream();
+            enc.Save(ms);
+            return new MemoryStream(ms.ToArray()[14..]); // strip BITMAPFILEHEADER → CF_DIB
+        }
+        int before = s.ItemsOnDay(Today).Count(i => i.Kind == ClipKind.Image);
+        var shot = new DataObject();
+        shot.SetData(DataFormats.Dib, Dib(MakeImage(640, 360, "DIB 截图", Colors.Teal, Colors.Navy)));
+        Clipboard.SetDataObject(shot, true);
+        Pump(2500);
+        Check(s.ItemsOnDay(Today).Count(i => i.Kind == ClipKind.Image) == before + 1, "DIB-only screenshot is captured");
+        var shot2 = new DataObject();
+        shot2.SetData(DataFormats.Dib, Dib(MakeImage(500, 300, "带空文本的截图", Colors.Crimson, Colors.Gold)));
+        shot2.SetData(DataFormats.UnicodeText, "");
+        Clipboard.SetDataObject(shot2, true);
+        Pump(2500);
+        Check(s.ItemsOnDay(Today).Count(i => i.Kind == ClipKind.Image) == before + 2, "image next to an empty text format is captured");
+        var log = Path.Combine(Settings.DataDir, "agosclip.log");
+        Check(File.Exists(log) && File.ReadAllText(log).Contains("→ image 500x300"), "capture decisions are logged");
+
         app.Settings.RecordImages = false;
         Clipboard.SetImage(MakeImage(300, 200, "不记录", Colors.Orange, Colors.Red));
         Pump(1500);
-        Check(s.ItemsOnDay(Today).Count(i => i.Kind == ClipKind.Image) == 1, "images ignored when 记录图片 is off");
+        Check(s.ItemsOnDay(Today).Count(i => i.Kind == ClipKind.Image) == before + 2, "images ignored when 记录图片 is off");
         app.Settings.RecordImages = true;
     }
 
