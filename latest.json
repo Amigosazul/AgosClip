@@ -1,9 +1,9 @@
 {
-  "version": "1.7.0",
-  "file": "AgosClip-Setup-1.7.0.exe",
-  "sha256": "77734d45624c0bbbb5e1bb18080a81da5144af0bf7d5ee881160b5faed1e8d18",
-  "size": 52739886,
-  "notes": "## AgosClip 1.7.0\n\n**设置界面重新整理**\n- 改成左边一列导航、右边分页显示，不再是一整页长长地往下滚：\n  - 通用：Win+V、自动粘贴、开机启动、毛玻璃\n  - 记录：保留天数、记录图片、清空历史\n  - 存储与日志\n  - 更新\n  - 关于与反馈\n- 每一页的选项分组显示，说明文字也精简了。\n\n**日志放进数据位置，可以设大小上限**\n- 日志和历史记录、图片放在一起。如果你把数据位置改到了别的盘，旧日志会自动搬过去，以后改位置时日志也会一起搬。C 盘只留一个几 KB 的设置文件。\n- 新增“日志大小上限”：1 / 5 / 10 / 50 MB，默认 5 MB。超出后会自动删掉最旧的部分；把上限调小会立刻生效。\n- 卸载时选择删除记录，日志也会一起删除。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.7.0/AgosClip-Setup-1.7.0.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.7.0/AgosClip-Setup-1.7.0.exe",
+  "version": "1.7.1",
+  "file": "AgosClip-Setup-1.7.1.exe",
+  "sha256": "ae488bc0de07a0cb2e76583e0d2629f817ff7359d3211b355c2ea32e5eeaa3d1",
+  "size": 52770629,
+  "notes": "## AgosClip 1.7.1\n\n- 设置窗口去掉了系统标题栏：侧边栏和毛玻璃背景一直延伸到窗口最上方，右上角换成了自己画的最小化和关闭按钮（鼠标移到关闭上会变红）。拖动窗口顶部仍然可以移动窗口。\n- README 重写：功能、快捷键、安装、数据位置、在线升级、反馈和开发说明。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.7.1/AgosClip-Setup-1.7.1.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.7.1/AgosClip-Setup-1.7.1.exe",
   "mirrors": [
     "https://ghfast.top/",
     "https://gh-proxy.com/",
