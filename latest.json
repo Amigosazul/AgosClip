@@ -1,9 +1,9 @@
 {
-  "version": "1.6.0",
-  "file": "AgosClip-Setup-1.6.0.exe",
-  "sha256": "a82e2f4d8c7f2500fd45a5f2352e95ded2b15333e793896cbe9f116ad559ae42",
-  "size": 52760652,
-  "notes": "## AgosClip 1.6.0\n\n**修复：设置里在线更新下载不动**\n- 国内不开代理时，从 GitHub 直接下载基本会超时。现在除了 GitHub 直连，还有多条镜像线路可用：先同时测一下每条线路的速度，自动选最快的下载。\n- 某条线路中途卡住，或者慢到每秒不足 25 KB，会自动换一条，并且接着已经下载的部分继续，不用从头开始。下载失败后再点一次，也会接着下。\n- 检查新版本时，如果连不上 GitHub 接口，会改用 jsDelivr 镜像获取版本信息。\n- 安全：校验值只从 GitHub 官方接口或仓库里的 `latest.json` 取，不从镜像取。镜像返回的文件对不上校验值会被直接丢弃。\n- 下载时会显示正在用哪条线路、当前速度。另外新增了“用浏览器下载”按钮。\n\n**修复：笔记本触摸板一划就滚到底**\n- 以前滚动一次就移动固定的距离，触摸板一次滑动会发出几十次很小的滚动，结果直接滚到底。现在按实际滚动的幅度来移动，记录列表和设置页都改了。\n- 触摸板左右滑动可以横向滚动日期卡片。",
+  "version": "1.6.1",
+  "file": "AgosClip-Setup-1.6.1.exe",
+  "sha256": "5e6d6d9c6c70d52f82c38a9a26474d63b675ddaae433603a86c16f4ec7f5bf59",
+  "size": 52755659,
+  "notes": "## AgosClip 1.6.1\n\n**在线更新再提速**\n- 安装包分成 1 MB 的小块，同时从多条线路下载，速度能叠加起来。实测国内不开代理：50 MB 从 6 分钟缩短到 46 秒。\n- 某一块下载失败或太慢，会交给别的线路重下；一直出错的线路会被自动停用。下载中断后再点一次，已经下完的块不用重下。\n- 其他改动同 1.6.0：多线路测速、校验值只从官方取，以及修复触摸板一划就滚到底。\n\n**国内手动下载**（1.5.0 及更早的版本只能从 GitHub 直连下载更新，下不动的话请手动装一次这个版本，之后就能在程序里正常升级了）：\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.6.1/AgosClip-Setup-1.6.1.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.6.1/AgosClip-Setup-1.6.1.exe",
   "mirrors": [
     "https://ghfast.top/",
     "https://gh-proxy.com/",
