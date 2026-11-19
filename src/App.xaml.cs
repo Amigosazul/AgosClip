@@ -40,6 +40,13 @@ public partial class App : Application
         base.OnStartup(e);
         DispatcherUnhandledException += (_, a) => { Log("unhandled: " + a.Exception); a.Handled = true; };
 
+        int searchTest = Array.FindIndex(e.Args, a => a == "--selftest-search");
+        if (searchTest >= 0)
+        {
+            Shutdown(SelfTest.RunSearchUi(this, searchTest + 1 < e.Args.Length ? e.Args[searchTest + 1] : "selftest-search-out"));
+            return;
+        }
+
         int st = Array.FindIndex(e.Args, a => a is "--selftest" or "--selftest-animation");
         if (st >= 0)
         {

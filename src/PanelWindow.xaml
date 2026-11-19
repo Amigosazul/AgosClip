@@ -192,6 +192,7 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock Text="剪贴板" FontSize="15" FontWeight="SemiBold"/>
@@ -200,15 +201,22 @@
                             <TextBlock Text="已暂停记录" FontSize="10.5" Foreground="{DynamicResource Accent}"/>
                         </Border>
                     </StackPanel>
-                    <Button x:Name="StickyBtn" Grid.Column="1" Style="{StaticResource IconButton}" Content="&#xE718;"
+                    <Button x:Name="SearchButton" Grid.Column="1" Style="{StaticResource IconButton}" Content="&#xE721;"
+                            ToolTip="搜索全部历史 (Ctrl+F)" AutomationProperties.Name="搜索全部历史"
+                            Click="Search_Click"/>
+                    <Button x:Name="StickyBtn" Grid.Column="2" Style="{StaticResource IconButton}" Content="&#xE718;"
                             ToolTip="固定在桌面：点别处或粘贴后不自动关闭" Click="Sticky_Click"/>
-                    <Button Grid.Column="2" Style="{StaticResource IconButton}" Content="&#xE713;" ToolTip="设置" Click="Settings_Click"/>
-                    <Button Grid.Column="3" Style="{StaticResource IconButton}" Content="&#xE711;" FontSize="12" ToolTip="关闭 (Esc)" Click="Close_Click"/>
+                    <Button Grid.Column="3" Style="{StaticResource IconButton}" Content="&#xE713;" ToolTip="设置" Click="Settings_Click"/>
+                    <Button Grid.Column="4" Style="{StaticResource IconButton}" Content="&#xE711;" FontSize="12" ToolTip="关闭 (Esc)" Click="Close_Click"/>
                 </Grid>
 
-                <!-- Search -->
-                <TextBox x:Name="SearchBox" Grid.Row="1" Style="{StaticResource SearchBox}" Tag="搜索全部历史"
-                         TextChanged="Search_TextChanged"/>
+                <!-- Search: the fixed-height field is revealed as the surrounding row grows. -->
+                <Border x:Name="SearchReveal" Grid.Row="1" Height="0" Opacity="0" Visibility="Collapsed"
+                        ClipToBounds="True" IsHitTestVisible="False">
+                    <TextBox x:Name="SearchBox" Style="{StaticResource SearchBox}" Tag="搜索全部历史"
+                             Margin="3,3,3,4" VerticalAlignment="Top" AutomationProperties.Name="搜索全部历史"
+                             IsEnabled="False" TextChanged="Search_TextChanged"/>
+                </Border>
 
                 <!-- Date segments -->
                 <Border Grid.Row="2" Margin="0,10,0,0" Background="{DynamicResource Track}" CornerRadius="11" Padding="3">
@@ -275,7 +283,7 @@
                 <!-- Calendar overlay (inside the window so it shares the glass) -->
                 <Grid x:Name="CalOverlay" Grid.RowSpan="6" Margin="-14,-10" Visibility="Collapsed">
                     <Rectangle Fill="{DynamicResource Dim}" RadiusX="8" RadiusY="8" MouseLeftButtonDown="CalBackdrop_Click"/>
-                    <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,118,14,0" Width="262"
+                    <Border x:Name="CalShadow" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,118,14,0" Width="262"
                             Height="{Binding ActualHeight, ElementName=CalCard}" CornerRadius="12" Background="{DynamicResource OverlayBg}">
                         <Border.Effect>
                             <DropShadowEffect BlurRadius="24" ShadowDepth="6" Direction="270" Opacity="0.25" Color="Black"/>
