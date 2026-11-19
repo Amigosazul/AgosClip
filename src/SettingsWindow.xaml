@@ -173,6 +173,19 @@
                 </StackPanel>
             </Border>
 
+            <Border Style="{StaticResource Section}">
+                <StackPanel>
+                    <TextBlock Text="反馈与日志" Style="{StaticResource Heading}" Margin="0,0,0,4"/>
+                    <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,10"
+                               Text="日志只记录程序做了什么（来源程序、剪贴板格式、出错原因），不记录复制的内容。遇到问题可以一键反馈，诊断文件会作为附件放进 GitHub 问题里。"/>
+                    <WrapPanel>
+                        <Button Style="{StaticResource Btn}" Content="一键反馈…" Click="Feedback_Click" Margin="0,0,8,8"/>
+                        <Button Style="{StaticResource Btn}" Content="查看日志" Click="OpenLog_Click" Margin="0,0,8,8"/>
+                        <Button Style="{StaticResource Btn}" Content="打开日志文件夹" Click="OpenLogFolder_Click" Margin="0,0,8,8"/>
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
             <Border Style="{StaticResource Section}" Margin="0">
                 <StackPanel>
                     <TextBlock Text="数据" Style="{StaticResource Heading}" Margin="0,0,0,4"/>

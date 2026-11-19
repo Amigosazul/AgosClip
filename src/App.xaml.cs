@@ -68,6 +68,8 @@ public partial class App : Application
         bool dataFolderMissing = !Settings.ApplyDataLocation();
         if (dataFolderMissing) Log($"data folder missing: {Settings.DataLocation}; using {Settings.DataDir} for now");
         Settings.RememberDataDir();
+        Log($"start v{Updater.Current.ToString(3)} on Windows {Environment.OSVersion.Version} from {AppContext.BaseDirectory}" +
+            (background ? " (autostart)" : "") + (dataFolderMissing ? " [data folder missing]" : ""));
         bool firstRun = !Settings.FirstRunDone;
         if (firstRun)
         {
@@ -132,6 +134,7 @@ public partial class App : Application
         menu.Items.Add(_pauseItem);
         menu.Items.Add("设置…", null, (_, _) => ShowSettings());
         menu.Items.Add("检查更新…", null, (_, _) => ShowSettings(checkUpdate: true));
+        menu.Items.Add("反馈问题…", null, (_, _) => StartFeedback(null));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("退出 AgosClip", null, (_, _) => Quit());
 
@@ -202,6 +205,28 @@ public partial class App : Application
         catch (Exception ex) { Log("remember dir: " + ex.Message); }
     }
 
+    /// <summary>Asks first (the issue is public), then runs the one-click feedback flow.</summary>
+    public void StartFeedback(Window? owner)
+    {
+        const string msg = "将会：\n\n" +
+            "1. 生成一个诊断文件（版本、系统信息、设置、记录条数和最近的日志）。\n" +
+            "   不含任何剪贴板内容，用户名、电脑名和用户目录会被替换。\n" +
+            "2. 在资源管理器里选中这个文件，并把它复制到剪贴板。\n" +
+            "3. 打开 GitHub 的新建问题页面，内容已经预先填好。\n\n" +
+            "在页面里把文件拖进输入框（或按 Ctrl+V），写几句发生了什么，再点提交即可。\n" +
+            "注意：GitHub 上的问题是公开的，需要登录 GitHub 账号。\n\n继续吗？";
+        var r = owner != null
+            ? MessageBox.Show(owner, msg, "一键反馈", MessageBoxButton.OKCancel, MessageBoxImage.Information)
+            : MessageBox.Show(msg, "一键反馈", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+        if (r != MessageBoxResult.OK) return;
+        try { Feedback.Start(); }
+        catch (Exception ex)
+        {
+            Log("feedback failed: " + ex);
+            MessageBox.Show("生成诊断文件失败：" + ex.Message, "一键反馈", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     public void ShowSettings(bool checkUpdate = false)
     {
         _panel?.HidePanel();
@@ -262,7 +287,9 @@ public partial class App : Application
             {
                 Directory.CreateDirectory(Settings.ConfigDir);
                 var path = Path.Combine(Settings.ConfigDir, "agosclip.log");
-                if (File.Exists(path) && new FileInfo(path).Length > 1_000_000) File.Delete(path);
+                // rotate: keep one previous file so feedback still has recent history
+                if (File.Exists(path) && new FileInfo(path).Length > 1_000_000)
+                    File.Move(path, Path.Combine(Settings.ConfigDir, "agosclip.old.log"), true);
                 File.AppendAllText(path, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {msg}{Environment.NewLine}");
             }
         }

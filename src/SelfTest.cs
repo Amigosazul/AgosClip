@@ -53,6 +53,7 @@ internal static class SelfTest
             StoreTests(app.Store);
             ClipboardTests(app);
             MoveTests(app);
+            FeedbackTests(app);
             Seed(app);
             Snapshots(outDir);
             if (Environment.GetEnvironmentVariable("AGOSCLIP_UPDATE_TEST") == "1") UpdateTest();
@@ -439,5 +440,23 @@ internal static class SelfTest
         Check(!Directory.Exists(target) && File.Exists(Path.Combine(picked, "someone-elses-file.txt")),
             "old custom folder removed; unrelated files untouched");
         Directory.Delete(picked, true);
+    }
+
+    static void FeedbackTests(App app)
+    {
+        var secretText = "SECRET-CLIP-" + Guid.NewGuid().ToString("N")[..6];
+        app.Store.Upsert(ClipKind.Text, Store.TextHash(secretText), secretText, null, null, 0, 0, "记事本");
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        App.Log($"test line with a personal path {profile}\\Documents and pc {Environment.MachineName}");
+        var path = Feedback.WriteDiagnostics();
+        var txt = File.ReadAllText(path);
+        Check(txt.Contains("== Log") && txt.Contains("AgosClip " + Updater.Current.ToString(3)), "diagnostics file has version and log");
+        Check(!txt.Contains(secretText), "diagnostics contain no clipboard content");
+        Check(!txt.Contains(profile, StringComparison.OrdinalIgnoreCase) && !txt.Contains(Environment.MachineName, StringComparison.OrdinalIgnoreCase)
+              && txt.Contains("%USERPROFILE%"), "user folder and PC name are redacted");
+        var url = Feedback.IssueUrl(Path.GetFileName(path));
+        Check(url.StartsWith("https://github.com/Amigosazul/AgosClip/issues/new?title=") && url.Length < 6000, $"issue link is valid ({url.Length} chars)");
+        File.Copy(path, Path.Combine(Path.GetDirectoryName(Settings.ConfigDir)!, "agosclip-selftest", "diagnostics-sample.txt"), true);
+        File.Delete(path);
     }
 }

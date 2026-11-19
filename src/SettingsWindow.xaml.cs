@@ -277,4 +277,10 @@ public partial class SettingsWindow : Window
         if (msg != null) MoveStatus.Text = msg;
         MoveStatus.Visibility = Visibility.Visible;
     }
+
+    // ───────────── feedback & log ─────────────
+
+    void Feedback_Click(object sender, RoutedEventArgs e) => App.Current.StartFeedback(this);
+    void OpenLog_Click(object sender, RoutedEventArgs e) => Feedback.OpenLog();
+    void OpenLogFolder_Click(object sender, RoutedEventArgs e) => Feedback.OpenLogFolder();
 }
