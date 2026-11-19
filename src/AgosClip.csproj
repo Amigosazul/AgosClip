@@ -13,7 +13,7 @@
     <RootNamespace>AgosClip</RootNamespace>
     <ApplicationIcon>Assets\AgosClip.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.8.2</Version>
+    <Version>1.8.3</Version>
     <Product>AgosClip</Product>
     <Description>AgosClip 剪贴板历史</Description>
     <Copyright>AgosClip</Copyright>

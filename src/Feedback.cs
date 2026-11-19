@@ -144,8 +144,9 @@ public static class Feedback
         var path = WriteDiagnostics();
         try
         {
-            var files = new StringCollection { path };
-            Clipboard.SetFileDropList(files);
+            // same fully-rendered Win32 write as paste-back (no OLE delayed rendering)
+            ClipboardWriter.Write(new ClipboardWriter.Payload().Files(new[] { path })
+                .Add("Preferred DropEffect", BitConverter.GetBytes(1)));
         }
         catch (Exception ex) { App.Log("feedback: clipboard failed: " + ex.Message); }
         Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });

@@ -20,33 +20,29 @@ public static class Paster
 
     public static bool SetClipboard(ClipItem item, System.Collections.Generic.IReadOnlyList<ClipFormat>? formats, out string? problem)
     {
+        // Fully rendered Win32 write (see ClipboardWriter): WPF's delayed-rendering SetDataObject could
+        // deadlock for ~10 s against anyone reading the clipboard at the same moment.
         problem = null;
-        var data = new DataObject();
+        var payload = new ClipboardWriter.Payload();
         if (item.Kind == ClipKind.Text)
         {
             if (item.Text == null) return false;
-            data.SetText(item.Text, TextDataFormat.UnicodeText);
-            // rich formats first-class next to plain text: the target app picks the best one it understands
+            payload.Text(item.Text);
+            // rich formats next to plain text: the target app picks the best one it understands
             foreach (var f in formats ?? Array.Empty<ClipFormat>())
             {
-                try
-                {
-                    if (f.IsText) data.SetData(f.Name, System.Text.Encoding.UTF8.GetString(f.Data));
-                    else data.SetData(f.Name, new MemoryStream(f.Data));
-                }
-                catch (Exception ex) { App.Log($"paste: format {f.Name} skipped: {ex.GetType().Name}"); }
+                if (f.IsText) payload.Bytes8(f.Name, f.Data); // HTML (UTF-8), RTF, CSV: 8-bit text + NUL
+                else payload.Add(f.Name, f.Data);              // e.g. Excel's XML Spreadsheet, raw bytes
             }
         }
         else if (item.Kind == ClipKind.Files)
         {
             var existing = item.Paths.Where(p => File.Exists(p) || Directory.Exists(p)).ToArray();
             if (existing.Length == 0) { problem = "这些文件都已经不在原来的位置了"; return false; }
-            var list = new System.Collections.Specialized.StringCollection();
-            list.AddRange(existing);
-            data.SetFileDropList(list);
+            payload.Files(existing);
             // always "copy": pasting from history must never move the user's original files
-            data.SetData("Preferred DropEffect", new MemoryStream(BitConverter.GetBytes(1 /* DROPEFFECT_COPY */)));
-            data.SetText(string.Join(Environment.NewLine, existing), TextDataFormat.UnicodeText); // for text editors
+            payload.Add("Preferred DropEffect", BitConverter.GetBytes(1 /* DROPEFFECT_COPY */));
+            payload.Text(string.Join(Environment.NewLine, existing)); // for text editors
             if (existing.Length < item.Paths.Length)
                 problem = $"有 {item.Paths.Length - existing.Length} 个文件已经不在原来的位置，只粘贴了 {existing.Length} 个";
         }
@@ -62,17 +58,10 @@ public static class Paster
             bmp.StreamSource = new MemoryStream(bytes);
             bmp.EndInit();
             bmp.Freeze();
-            data.SetImage(bmp);                       // CF_DIB / CF_BITMAP for most apps
-            data.SetData("PNG", new MemoryStream(bytes)); // keeps transparency for apps that read PNG
+            payload.Dib(bmp);           // CF_DIB for most apps (Windows synthesises CF_BITMAP / CF_DIBV5)
+            payload.Add("PNG", bytes);  // keeps transparency for apps that read PNG
         }
-
-        for (int i = 0; i < 10; i++)
-        {
-            try { Clipboard.SetDataObject(data, true); return true; }
-            catch (COMException) { Thread.Sleep(30); }
-            catch (ExternalException) { Thread.Sleep(30); }
-        }
-        return false;
+        return ClipboardWriter.Write(payload);
     }
 
     /// <summary>Gives focus back to the target window and sends Ctrl+V to it.</summary>

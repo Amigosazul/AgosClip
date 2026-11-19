@@ -71,6 +71,7 @@ internal static class SelfTest
                 MoveTests(app);
                 FeedbackTests(app);
                 IssueTests(app);
+                PasteContentionTest(app);
             }
             Seed(app);
             PlacementTests();
@@ -1080,5 +1081,52 @@ internal static class SelfTest
         Pump(300);
         Check(panel.LastOpenReusedList, "an unchanged history reuses the built list");
         panel.Close();
+    }
+
+    /// <summary>
+    /// Regression for the 10 s "paste: put text on clipboard" hang: while another thread keeps reading the
+    /// clipboard (our own reader thread, or remote-desktop / sync tools that watch it), pasting must stay fast.
+    /// </summary>
+    static void PasteContentionTest(App app)
+    {
+        var s = app.Store;
+        var html = "Version:0.9\r\nStartHTML:00000097\r\nEndHTML:00000160\r\nStartFragment:00000131\r\nEndFragment:00000124\r\n<html><body><!--StartFragment--><b>contention</b><!--EndFragment--></body></html>";
+        s.Upsert(ClipKind.Text, Store.TextHash("contention test text"), "contention test text", null, null, 0, 0, "Chrome", null,
+            new[] { new ClipFormat(DataFormats.Html, Encoding.UTF8.GetBytes(html), true) });
+        var item = s.Search("contention test text")[0];
+        var formats = s.GetFormats(item.Id);
+
+        using var stop = new System.Threading.CancellationTokenSource();
+        int reads = 0;
+        var reader = new System.Threading.Thread(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                try
+                {
+                    var d = Clipboard.GetDataObject();
+                    foreach (var f in d?.GetFormats(false) ?? Array.Empty<string>()) { try { d!.GetData(f, false); } catch { } }
+                    reads++;
+                }
+                catch { }
+            }
+        }) { IsBackground = true };
+        reader.SetApartmentState(System.Threading.ApartmentState.STA);
+        reader.Start();
+        double worst = 0;
+        int ok = 0;
+        try
+        {
+            for (int i = 0; i < 15; i++)
+            {
+                var t = System.Diagnostics.Stopwatch.StartNew();
+                if (Paster.SetClipboard(item, formats)) ok++;
+                worst = Math.Max(worst, t.Elapsed.TotalMilliseconds);
+                Pump(40);
+                if (worst > 3000) break;
+            }
+        }
+        finally { stop.Cancel(); reader.Join(15000); }
+        Check(worst < 1000 && ok >= 10, $"pasting stays fast while another thread reads the clipboard (worst {worst:0} ms, {ok} ok, {reads} reads)");
     }
 }
