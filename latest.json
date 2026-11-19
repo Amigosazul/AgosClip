@@ -1,9 +1,9 @@
 {
-  "version": "1.8.1",
-  "file": "AgosClip-Setup-1.8.1.exe",
-  "sha256": "813478ec11f72159e2075f52e9b6208a77ce13beaa1595cc9546d1f8c6263c87",
-  "size": 52763339,
-  "notes": "## AgosClip 1.8.1\n\n**修复：Windows 11 设置窗口右上角重影**\n- Windows 11 会在设置窗口的毛玻璃上额外画一套系统的最小化、最大化、关闭按钮，和窗口自带的按钮叠在一起，看起来就是重影。现在不会再出现了，右上角只剩窗口自己的“最小化”和“关闭”。\n- 点任务栏图标仍然可以最小化、还原窗口，Alt+F4 也照常能关闭。\n- 用键盘选中按钮时，不再显示老式的虚线框，改为 Win11 风格的圆角蓝色边框。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.8.1/AgosClip-Setup-1.8.1.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.8.1/AgosClip-Setup-1.8.1.exe",
+  "version": "1.8.3",
+  "file": "AgosClip-Setup-1.8.3.exe",
+  "sha256": "48aa12d000f9ca85b94d325ba80750233f3e904a37db639053a099ba2ccc7efd",
+  "size": 52783455,
+  "notes": "## AgosClip 1.8.3\n\n**重要修复：粘贴时卡死约 10 秒**\n- 1.4.1 到 1.8.1 版本中，从历史记录粘贴时，如果同时有程序在读剪贴板（AgosClip 自己的监听，或者远程桌面、同步类软件），界面会卡住大约 10 秒、显示“未响应”，有时还会被系统关掉。\n- 原因是旧的写入方式不会马上把内容放到剪贴板上，读取的一方和 AgosClip 会互相等待，直到 Windows 超时。现在改为一次性把所有格式的完整内容写入剪贴板，不会再出现这种互相等待。\n- 实测：另一个线程不停读取剪贴板时连续粘贴 15 次，修复前最慢一次要 10.3 秒，修复后最慢只要 77 毫秒。\n- 文字、富文本和表格、图片、文件的粘贴，以及“一键反馈”里复制诊断文件，都已经改用新的写法。\n\n**按 Win+V 打开更流畅**\n- 打开动画不再每一帧都改变窗口大小，而是让完整的窗口从输入框那一侧轻轻滑出。每帧的计算量减少了一半以上。\n- 查找当前输入框的位置和准备记录列表同时进行，最多等 80 毫秒，超时就按光标或鼠标位置弹出。\n- 上次关闭后如果没有新内容，直接沿用上次的列表，大约 1 毫秒就能打开。\n- 日志里会记录每次打开的耗时（`open timing`），方便排查卡顿。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.8.3/AgosClip-Setup-1.8.3.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.8.3/AgosClip-Setup-1.8.3.exe",
   "mirrors": [
     "https://ghfast.top/",
     "https://gh-proxy.com/",
