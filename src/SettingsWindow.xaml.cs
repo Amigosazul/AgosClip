@@ -24,7 +24,13 @@ public partial class SettingsWindow : Window
         InitializeComponent();
         Height = Math.Min(Height, SystemParameters.WorkArea.Height - 40);
         SmoothWheel.Attach(PageScroll);
-        SourceInitialized += (_, _) => Glass.Apply(this);
+        SourceInitialized += (_, _) => { HideSystemCaptionButtons(); Glass.Apply(this); };
+        StateChanged += (_, _) => HideSystemCaptionButtons(); // WPF may rewrite the style on restore
+        PreviewKeyDown += (_, e) =>
+        {
+            // without a system menu Windows no longer turns Alt+F4 into SC_CLOSE for us
+            if (e.Key == System.Windows.Input.Key.System && e.SystemKey == System.Windows.Input.Key.F4) { Close(); e.Handled = true; }
+        };
 
         int cur = S.RetentionDays;
         var list = Choices.ToList();
@@ -334,6 +340,25 @@ public partial class SettingsWindow : Window
     void OpenLogFolder_Click(object sender, RoutedEventArgs e) => Feedback.OpenLogFolder();
 
     // ───────────── immersive title bar ─────────────
+
+    /// <summary>
+    /// Windows 11 draws its own caption buttons onto the glass frame of any window with a system menu,
+    /// which showed up as ghost min/max/close buttons behind ours. Drop WS_SYSMENU (and WS_MAXIMIZEBOX)
+    /// so DWM draws nothing there; keep WS_MINIMIZEBOX so clicking the taskbar icon still minimises.
+    /// </summary>
+    internal void HideSystemCaptionButtons()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        const long WS_SYSMENU = 0x00080000, WS_MAXIMIZEBOX = 0x00010000, WS_MINIMIZEBOX = 0x00020000;
+        long style = (long)Native.GetWindowLongPtr(hwnd, -16);
+        long want = (style & ~(WS_SYSMENU | WS_MAXIMIZEBOX)) | WS_MINIMIZEBOX;
+        if (want != style)
+        {
+            Native.SetWindowLongPtr(hwnd, -16, (IntPtr)want);
+            Native.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020); // NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED
+        }
+    }
 
     void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
     void CloseWindow_Click(object sender, RoutedEventArgs e) => Close();

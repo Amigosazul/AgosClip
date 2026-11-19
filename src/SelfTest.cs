@@ -767,6 +767,14 @@ internal static class SelfTest
                 sw.Show();
                 Pump(400);
                 Check(sw.Content is FrameworkElement, "settings window builds");
+                {
+                    long st = (long)Native.GetWindowLongPtr(new System.Windows.Interop.WindowInteropHelper(sw).Handle, -16);
+                    Check((st & 0x00080000L) == 0 && (st & 0x00010000L) == 0 && (st & 0x00020000L) != 0,
+                        "settings window: no system menu/maximize (no ghost caption buttons), minimize kept for the taskbar");
+                    sw.WindowState = WindowState.Minimized; Pump(150); sw.WindowState = WindowState.Normal; Pump(150);
+                    st = (long)Native.GetWindowLongPtr(new System.Windows.Interop.WindowInteropHelper(sw).Handle, -16);
+                    Check((st & 0x00080000L) == 0, "…and it stays that way after minimise/restore");
+                }
                 string[] names = { "general", "history", "storage", "update", "about" };
                 for (int pi = 0; pi < names.Length; pi++)
                 {
