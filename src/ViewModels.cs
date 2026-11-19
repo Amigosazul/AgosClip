@@ -104,6 +104,7 @@ public sealed class ItemVm : Bindable
             _thumbTried = true;
             var rel = Item.ThumbPath ?? Item.ImagePath;
             if (rel == null) return null;
+            Watchdog.Step("load thumbnail " + rel);
             try
             {
                 var path = Path.Combine(Settings.DataDir, rel);

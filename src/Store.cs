@@ -203,6 +203,7 @@ public sealed class Store : IDisposable
     public int Cleanup(int retentionDays)
     {
         if (retentionDays <= 0) return 0;
+        Watchdog.Step("cleanup old items");
         var cutoffDay = DateOnly.FromDateTime(DateTime.Now).AddDays(-(retentionDays - 1));
         var cutoff = DayRange(cutoffDay).from;
         int n = DeleteWhere("pinned=0 AND created_at < $c", c => c.Parameters.AddWithValue("$c", cutoff));

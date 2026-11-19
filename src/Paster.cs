@@ -48,6 +48,7 @@ public static class Paster
     public static void PasteInto(IntPtr target, Dispatcher ui)
     {
         if (target == IntPtr.Zero || !Native.IsWindow(target)) return;
+        Watchdog.Step("paste: switch to target window");
         Native.ForceForeground(target);
         var timer = new DispatcherTimer(DispatcherPriority.Normal, ui) { Interval = TimeSpan.FromMilliseconds(80) };
         timer.Tick += (_, _) =>

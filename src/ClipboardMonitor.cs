@@ -23,22 +23,54 @@ public sealed class ClipboardMonitor : IDisposable
 
     readonly Store _store;
     readonly Func<Settings> _settings;
-    readonly HwndSource _wnd;
-    readonly DispatcherTimer _debounce;
     readonly int _myPid = Environment.ProcessId;
+    readonly Dispatcher _ui;           // the app's UI thread: all Store writes go here
+    readonly Dispatcher _reader;       // our own STA thread: all clipboard reading happens here
+    internal Dispatcher ReaderForTest => _reader;
+    HwndSource _wnd = null!;
+    DispatcherTimer _debounce = null!;
 
+    /// <summary>
+    /// Clipboard data is read on a dedicated thread. Reading can block for as long as the program that
+    /// copied it takes to produce the data (delayed rendering — e.g. a chat app fetching the full image);
+    /// on the UI thread that froze the whole panel ("未响应").
+    /// </summary>
     public ClipboardMonitor(Store store, Func<Settings> settings)
     {
         _store = store;
         _settings = settings;
-        // message-only window (HWND_MESSAGE = -3)
-        _wnd = new HwndSource(new HwndSourceParameters("AgosClipMonitor") { ParentWindow = new IntPtr(-3), WindowStyle = 0 });
-        _wnd.AddHook(WndProc);
-        _debounce = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(120) };
-        _debounce.Tick += (_, _) => { _debounce.Stop(); Capture(); };
-        if (!Native.AddClipboardFormatListener(_wnd.Handle))
-            throw new InvalidOperationException("AddClipboardFormatListener failed: " + Marshal.GetLastWin32Error());
+        _ui = Dispatcher.CurrentDispatcher;
+        Dispatcher? reader = null;
+        Exception? startError = null;
+        using var ready = new ManualResetEventSlim();
+        var t = new Thread(() =>
+        {
+            try
+            {
+                reader = Dispatcher.CurrentDispatcher;
+                // message-only window (HWND_MESSAGE = -3)
+                _wnd = new HwndSource(new HwndSourceParameters("AgosClipMonitor") { ParentWindow = new IntPtr(-3), WindowStyle = 0 });
+                _wnd.AddHook(WndProc);
+                _debounce = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(120) };
+                _debounce.Tick += (_, _) => { _debounce.Stop(); Capture(); };
+                if (!Native.AddClipboardFormatListener(_wnd.Handle))
+                    throw new InvalidOperationException("AddClipboardFormatListener failed: " + Marshal.GetLastWin32Error());
+            }
+            catch (Exception ex) { startError = ex; }
+            ready.Set();
+            if (startError == null) Dispatcher.Run();
+        }) { IsBackground = true, Name = "clipboard-reader" };
+        t.SetApartmentState(ApartmentState.STA);
+        t.Start();
+        ready.Wait();
+        if (startError != null) throw startError;
+        _reader = reader!;
     }
+
+    void OnUi(Action a) => _ui.BeginInvoke(() =>
+    {
+        try { a(); } catch (Exception ex) { App.Log("store write failed: " + ex); }
+    });
 
     IntPtr WndProc(IntPtr hwnd, int msg, IntPtr w, IntPtr l, ref bool handled)
     {
@@ -112,7 +144,8 @@ public sealed class ClipboardMonitor : IDisposable
         if (!string.IsNullOrWhiteSpace(text))
         {
             if (text.Length > MaxTextChars) { Diag(who, formats, $"skipped: text too long ({text.Length})"); return; }
-            _store.Upsert(ClipKind.Text, Store.TextHash(text), text, null, null, 0, 0, fromUs ? null : source);
+            var textSource = fromUs ? null : source;
+            OnUi(() => _store.Upsert(ClipKind.Text, Store.TextHash(text), text, null, null, 0, 0, textSource));
             Diag(who, formats, $"text ({text.Length} chars)");
             return;
         }
@@ -137,18 +170,13 @@ public sealed class ClipboardMonitor : IDisposable
         if ((long)img.PixelWidth * img.PixelHeight > MaxImagePixels) { Diag(who, formats, $"skipped: image too large {img.PixelWidth}x{img.PixelHeight}"); return; }
         img.Freeze();
         var src = fromUs ? null : source;
-        var disp = Dispatcher.CurrentDispatcher;
         Diag(who, formats, $"image {img.PixelWidth}x{img.PixelHeight}");
         Task.Run(() =>
         {
             try
             {
                 var (hash, rel, thumb) = SaveImage(img);
-                disp.BeginInvoke(() =>
-                {
-                    try { _store.Upsert(ClipKind.Image, hash, null, rel, thumb, img.PixelWidth, img.PixelHeight, src); }
-                    catch (Exception ex) { App.Log("store image failed: " + ex); }
-                });
+                OnUi(() => _store.Upsert(ClipKind.Image, hash, null, rel, thumb, img.PixelWidth, img.PixelHeight, src));
             }
             catch (Exception ex) { App.Log("save image failed: " + ex); }
         });
@@ -310,7 +338,15 @@ public sealed class ClipboardMonitor : IDisposable
 
     public void Dispose()
     {
-        Native.RemoveClipboardFormatListener(_wnd.Handle);
-        _wnd.Dispose();
+        try
+        {
+            _reader.Invoke(() =>
+            {
+                Native.RemoveClipboardFormatListener(_wnd.Handle);
+                _wnd.Dispose();
+            }, TimeSpan.FromSeconds(2));
+            _reader.InvokeShutdown();
+        }
+        catch { /* process is exiting anyway */ }
     }
 }

@@ -118,6 +118,21 @@ internal static class SelfTest
         s.ClearAll(false);
         _mon = new ClipboardMonitor(s, () => app.Settings);
 
+        // A slow clipboard owner must not freeze the UI: block the reader thread for 3 s and
+        // check the UI thread keeps answering.
+        _mon.ReaderForTest.BeginInvoke(() => System.Threading.Thread.Sleep(3000));
+        var sw0 = System.Diagnostics.Stopwatch.StartNew();
+        double worst = 0;
+        for (int i = 0; i < 10; i++)
+        {
+            var t0 = sw0.Elapsed.TotalMilliseconds;
+            Application.Current.Dispatcher.Invoke(() => { }, DispatcherPriority.Normal);
+            Pump(100);
+            worst = Math.Max(worst, sw0.Elapsed.TotalMilliseconds - t0 - 100);
+        }
+        Check(worst < 300, $"UI stays responsive while clipboard reading is blocked (worst lag {worst:0} ms)");
+        Pump(2500); // let the reader finish its 3 s block
+
         var text = "AgosClip 剪贴板测试 " + Guid.NewGuid().ToString("N")[..8];
         Clipboard.SetText(text);
         Pump(700);

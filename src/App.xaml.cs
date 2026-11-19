@@ -95,6 +95,7 @@ public partial class App : Application
         if (Settings.TakeOverWinV) _hook.Enable();
 
         _panel = new PanelWindow();
+        Watchdog.Start(Dispatcher);
         CreateTray();
 
         _updateTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(45) };

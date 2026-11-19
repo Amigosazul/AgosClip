@@ -122,6 +122,7 @@ public partial class PanelWindow : Window
 
     public void ShowFor(IntPtr target)
     {
+        Watchdog.Step("open panel");
         if (target == _hwnd || !Native.IsWindow(target)) target = IntPtr.Zero;
         if (IsVisible && _sticky) { if (target != IntPtr.Zero) _target = target; FocusSticky(); return; }
         _target = target;
@@ -282,6 +283,7 @@ public partial class PanelWindow : Window
 
     void LoadItems(int selectIndex)
     {
+        Watchdog.Step("load list");
         var q = Query;
         List<ClipItem> rows;
         bool showDate = false;
@@ -333,6 +335,7 @@ public partial class PanelWindow : Window
     void Paste(ItemVm vm)
     {
         _pasting = true;
+        Watchdog.Step(vm.IsImage ? $"paste: put image {vm.Item.Width}x{vm.Item.Height} on clipboard" : "paste: put text on clipboard");
         try
         {
             if (!Paster.SetClipboard(vm.Item))

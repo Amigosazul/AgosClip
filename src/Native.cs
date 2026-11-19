@@ -96,10 +96,14 @@ internal static class Native
     public static void Send(params INPUT[] inputs) => SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
 
     /// <summary>Brings a window to the foreground even when Windows' focus-stealing rules would refuse.</summary>
+    [DllImport("user32.dll")] public static extern bool IsHungAppWindow(IntPtr hwnd);
+
     public static void ForceForeground(IntPtr hwnd)
     {
         if (SetForegroundWindow(hwnd) && GetForegroundWindow() == hwnd) return;
         var fg = GetForegroundWindow();
+        // Attaching to a hung thread's input queue blocks us too — never do that.
+        if (IsHungAppWindow(fg) || IsHungAppWindow(hwnd)) return;
         uint fgThread = GetWindowThreadProcessId(fg, out _);
         uint me = GetCurrentThreadId();
         if (fgThread != 0 && fgThread != me)

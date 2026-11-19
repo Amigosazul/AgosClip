@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Threading;
 
 namespace AgosClip;
@@ -13,32 +14,48 @@ public sealed class WinVHook : IDisposable
 {
     readonly Native.LowLevelKeyboardProc _proc; // keep delegate alive
     readonly Dispatcher _ui;
+    readonly Dispatcher _hookThread;
     IntPtr _hook;
     bool _swallowingV;
 
     public event Action? Pressed;
 
+    /// <summary>
+    /// The hook lives on its own thread with its own message loop. Windows silently drops a low-level
+    /// hook whose thread doesn't answer in time, so it must never share the (sometimes busy) UI thread.
+    /// </summary>
     public WinVHook(Dispatcher ui)
     {
         _ui = ui;
         _proc = Callback;
+        Dispatcher? d = null;
+        using var ready = new ManualResetEventSlim();
+        var t = new Thread(() =>
+        {
+            d = Dispatcher.CurrentDispatcher;
+            ready.Set();
+            Dispatcher.Run();
+        }) { IsBackground = true, Name = "winv-hook" };
+        t.Start();
+        ready.Wait();
+        _hookThread = d!;
     }
 
     public bool Enabled => _hook != IntPtr.Zero;
 
-    public void Enable()
+    public void Enable() => _hookThread.Invoke(() =>
     {
         if (_hook != IntPtr.Zero) return;
         _hook = Native.SetWindowsHookEx(Native.WH_KEYBOARD_LL, _proc, Native.GetModuleHandle(null), 0);
         if (_hook == IntPtr.Zero) App.Log("SetWindowsHookEx failed: " + Marshal.GetLastWin32Error());
-    }
+    });
 
-    public void Disable()
+    public void Disable() => _hookThread.Invoke(() =>
     {
         if (_hook == IntPtr.Zero) return;
         Native.UnhookWindowsHookEx(_hook);
         _hook = IntPtr.Zero;
-    }
+    });
 
     IntPtr Callback(int nCode, IntPtr wParam, IntPtr lParam)
     {
@@ -57,12 +74,10 @@ public sealed class WinVHook : IDisposable
                     if (!_swallowingV) // ignore auto-repeat
                     {
                         _swallowingV = true;
-                        _ui.BeginInvoke(() =>
-                        {
-                            // A harmless key between Win-down and Win-up keeps the Start menu closed.
-                            Native.Send(Native.Key(Native.VK_DUMMY, false), Native.Key(Native.VK_DUMMY, true));
-                            Pressed?.Invoke();
-                        });
+                        // A harmless key between Win-down and Win-up keeps the Start menu closed.
+                        // Sent from the hook thread right after this callback, so it works even if the UI is busy.
+                        _hookThread.BeginInvoke(() => Native.Send(Native.Key(Native.VK_DUMMY, false), Native.Key(Native.VK_DUMMY, true)));
+                        _ui.BeginInvoke(() => Pressed?.Invoke());
                     }
                     return new IntPtr(1);
                 }
@@ -76,5 +91,8 @@ public sealed class WinVHook : IDisposable
         return Native.CallNextHookEx(_hook, nCode, wParam, lParam);
     }
 
-    public void Dispose() => Disable();
+    public void Dispose()
+    {
+        try { Disable(); _hookThread.InvokeShutdown(); } catch { }
+    }
 }
