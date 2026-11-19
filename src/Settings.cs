@@ -19,19 +19,18 @@ public sealed class Settings
     public bool AutoCheckUpdates { get; set; } = true;
     /// <summary>Last version we showed a tray notice for, so each release is announced once.</summary>
     public string? NotifiedVersion { get; set; }
-    /// <summary>Where the user dragged the panel (physical px, top-left). Null = open near the caret/cursor.</summary>
-    public int? PanelX { get; set; }
     /// <summary>Upper bound for agosclip.log + agosclip.old.log together.</summary>
     public int LogMaxMB { get; set; } = 5;
-    public int? PanelY { get; set; }
 
     /// <summary>Custom folder for history.db + images; null = the default (ConfigDir).</summary>
     public string? DataLocation { get; set; }
 
-    /// <summary>Where settings.json and the log live: %APPDATA%\AgosClip, or AGOSCLIP_DATA (used by --selftest). Never moves.</summary>
-    public static string ConfigDir { get; } =
-        Environment.GetEnvironmentVariable("AGOSCLIP_DATA") is { Length: > 0 } d ? d
-        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AgosClip");
+    static readonly string? ConfigOverride = Environment.GetEnvironmentVariable("AGOSCLIP_DATA");
+    internal static bool UsesDefaultConfigDir => string.IsNullOrWhiteSpace(ConfigOverride);
+
+    /// <summary>Where settings.json and the log live: %APPDATA%\AgosClip, or AGOSCLIP_DATA for local testing.</summary>
+    public static string ConfigDir { get; } = UsesDefaultConfigDir
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AgosClip") : ConfigOverride!;
 
     /// <summary>Where history.db and images\ live. Defaults to ConfigDir; the user can move it in settings.</summary>
     public static string DataDir { get; private set; } = ConfigDir;
