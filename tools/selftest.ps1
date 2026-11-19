@@ -1,16 +1,29 @@
-﻿[Console]::OutputEncoding = [Text.Encoding]::UTF8
+param(
+    [switch]$AnimationOnly,
+    [string]$Dotnet = 'dotnet'
+)
+
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
-$env:DOTNET_CLI_TELEMETRY_OPTOUT = 1
-Set-Location E:\CloudCLI\AgosClip\src
-$b = dotnet build -c Release -nologo -v q 2>&1
-$errs = $b | Select-String -Pattern ': error ' 
-if ($errs) { $errs | Select-Object -First 30 | ForEach-Object { $_.Line }; exit 1 }
-$out = 'E:\CloudCLI\tmp\agosclip-selftest'
-$data = 'E:\CloudCLI\tmp\agosclip-selftest-data'
-Remove-Item -Recurse -Force $out, $data -ErrorAction SilentlyContinue
-$env:AGOSCLIP_DATA = $data
-$exe = 'E:\CloudCLI\AgosClip\src\bin\Release\net8.0-windows10.0.17763.0\win-x64\AgosClip.exe'
-$p = Start-Process -FilePath $exe -ArgumentList '--selftest', $out -PassThru -Wait
-"exit code: $($p.ExitCode)"
-if (Test-Path "$out\results.txt") { Get-Content -Encoding UTF8 "$out\results.txt" }
-if (Test-Path "$data\agosclip.log") { '--- log ---'; Get-Content -Encoding UTF8 "$data\agosclip.log" | Select-Object -Last 30 }
+$env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+$root = Split-Path -Parent $PSScriptRoot
+$scratch = Join-Path ([IO.Path]::GetTempPath()) ('AgosClip-selftest-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $scratch | Out-Null
+$build = Join-Path $scratch 'build'
+$out = Join-Path $scratch 'results'
+$oldData = $env:AGOSCLIP_DATA
+$env:AGOSCLIP_DATA = Join-Path $scratch 'data'
+try {
+    & $Dotnet build (Join-Path $root 'src\AgosClip.csproj') -c Release -p:RuntimeIdentifier= -p:SelfContained=false -o $build -nologo -v minimal
+    if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+    $mode = if ($AnimationOnly) { '--selftest-animation' } else { '--selftest' }
+    & $Dotnet (Join-Path $build 'AgosClip.dll') $mode $out
+    $result = $LASTEXITCODE
+    $report = Join-Path $out 'results.txt'
+    if (Test-Path -LiteralPath $report) { Get-Content -Encoding UTF8 -LiteralPath $report }
+    if ($result -ne 0) { throw "Self-test failed ($result). Results: $scratch" }
+    Write-Output "Self-test passed. Screenshots and test data: $scratch"
+}
+finally {
+    $env:AGOSCLIP_DATA = $oldData
+}
