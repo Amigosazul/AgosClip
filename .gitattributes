@@ -1,0 +1,17 @@
+# Keep source files LF in the repository whatever the contributor's editor/core.autocrlf does.
+*.cs        text eol=lf
+*.xaml      text eol=lf
+*.csproj    text eol=lf
+*.manifest  text eol=lf
+*.md        text eol=lf
+*.json      text eol=lf
+*.py        text eol=lf
+*.sh        text eol=lf
+.gitignore  text eol=lf
+.gitattributes text eol=lf
+# Windows-only files are stored exactly as written (CRLF + UTF-8 BOM for PowerShell 5 / Inno Setup).
+*.ps1       -text
+*.iss       -text
+*.isl       -text
+*.ico       binary
+*.png       binary

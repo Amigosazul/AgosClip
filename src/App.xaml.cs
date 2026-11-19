@@ -84,8 +84,11 @@ public partial class App : Application
             Settings.FirstRunDone = true;
             Settings.Save();
         }
-        try { Settings.ApplyAutoStart(Settings.StartWithWindows); } catch (Exception ex) { Log("autostart: " + ex.Message); }
-        RememberInstallDir();
+        if (Settings.UsesDefaultConfigDir)
+        {
+            try { Settings.ApplyAutoStart(Settings.StartWithWindows); } catch (Exception ex) { Log("autostart: " + ex.Message); }
+            RememberInstallDir();
+        }
 
         Theme.Apply();
         SystemEvents.UserPreferenceChanged += (_, a) =>
@@ -101,7 +104,7 @@ public partial class App : Application
 
         _monitor = new ClipboardMonitor(Store, () => Settings);
         _hook = new WinVHook(Dispatcher);
-        _hook.Pressed += () => TogglePanel(Native.GetForegroundWindow());
+        _hook.Pressed += TogglePanel;
         if (Settings.TakeOverWinV) _hook.Enable();
 
         _panel = new PanelWindow();
@@ -168,6 +171,7 @@ public partial class App : Application
     public void TogglePanel(IntPtr target)
     {
         if (_panel == null) return;
+        if (_panel.IsOpening) { _panel.HidePanel(); return; }
         if (_panel.IsVisible && !_panel.IsClosing)
         {
             // pinned panel sitting in the background: Win+V brings it forward; a second Win+V closes it
@@ -257,7 +261,8 @@ public partial class App : Application
         LogLimitBytes = Math.Max(1, Settings.LogMaxMB) * (1L << 20);
         Theme.Apply();
         if (Settings.TakeOverWinV) _hook?.Enable(); else _hook?.Disable();
-        try { Settings.ApplyAutoStart(Settings.StartWithWindows); } catch (Exception ex) { Log("autostart: " + ex.Message); }
+        if (Settings.UsesDefaultConfigDir)
+            try { Settings.ApplyAutoStart(Settings.StartWithWindows); } catch (Exception ex) { Log("autostart: " + ex.Message); }
         RunCleanup();
     }
 

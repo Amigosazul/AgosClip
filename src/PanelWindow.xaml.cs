@@ -110,28 +110,17 @@ public partial class PanelWindow : Window
     {
         // only the header strip (title, grip, empty space) drags; buttons/fields/items handle their own clicks
         if (e.Handled || _closing || e.GetPosition(Header).Y > Header.ActualHeight + 4) return;
-        FinishAnimation(1); // dragging or resetting the position starts from the full window
-        var s = App.Current.Settings;
-        if (e.ClickCount == 2)
-        {
-            s.PanelX = s.PanelY = null;
-            s.Save();
-            PlaceNear(_target);
-            e.Handled = true;
-            return;
-        }
+        FinishAnimation(1); // drag the full window
         try { DragMove(); } catch (InvalidOperationException) { return; }
         if (Native.GetWindowRect(_hwnd, out var r))
-        {
             (_fx, _fy, _fw, _fh) = (r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
-            s.PanelX = r.Left;
-            s.PanelY = r.Top;
-            s.Save();
-        }
         e.Handled = true;
     }
 
-    public void ShowFor(IntPtr target)
+    int _showRequest;
+    internal bool IsOpening { get; private set; }
+
+    public async void ShowFor(IntPtr target)
     {
         Watchdog.Step("open panel");
         if (target == _hwnd || !Native.IsWindow(target)) target = IntPtr.Zero;
@@ -143,6 +132,13 @@ public partial class PanelWindow : Window
             FocusSticky();
             return;
         }
+        if (IsOpening) return;
+        IsOpening = true;
+        int request = ++_showRequest;
+        var anchor = await PanelPlacement.CaptureAsync(target);
+        if (request != _showRequest) return;
+        IsOpening = false;
+        if (target != IntPtr.Zero && Native.GetForegroundWindow() != target) return;
         _target = target;
         Glass.Apply(this);
         PausedBadge.Visibility = App.Paused ? Visibility.Visible : Visibility.Collapsed;
@@ -155,7 +151,7 @@ public partial class PanelWindow : Window
         LoadItems(0);
 
         CalOverlay.Visibility = Visibility.Collapsed;
-        PlaceNear(target);
+        PlaceNear(anchor);
         FinishAnimation(AnimatePanel ? 0 : 1); // set the collapsed rect before the HWND becomes visible
         Show();
         PlayOpenAnimation();
@@ -169,8 +165,8 @@ public partial class PanelWindow : Window
     // ───────────── open / close animation ─────────────
 
     /// <summary>
-    /// Unfolds the window from its anchor edge: below the caret/cursor it grows top→bottom; when there
-    /// is no room below, the panel sits above the anchor and grows bottom→top instead. The real window
+    /// Unfolds the window from its anchor edge: placement above the anchor grows bottom→top,
+    /// and placement below or beside it grows top→bottom. The real window
     /// rect is animated (not a render transform), so the glass backdrop and its shadow follow every frame.
     /// </summary>
     bool AnimatePanel => !Snapshot && SystemParameters.ClientAreaAnimation;
@@ -263,6 +259,8 @@ public partial class PanelWindow : Window
     /// </summary>
     public void HidePanel()
     {
+        ++_showRequest;
+        IsOpening = false;
         if (_sticky) SetSticky(false);
         CalOpen = false;
         if (!IsVisible || _closing) return;
@@ -271,65 +269,11 @@ public partial class PanelWindow : Window
         AnimateTo(0);
     }
 
-    internal void PlaceNear(IntPtr target)
+    void PlaceNear(PanelAnchor anchor)
     {
-        if (TryPlaceRemembered()) return;
-        Native.POINT pt = default;
-        int caretH = 0;
-        bool haveCaret = false;
-        if (target != IntPtr.Zero)
-        {
-            uint tid = Native.GetWindowThreadProcessId(target, out _);
-            var gti = new Native.GUITHREADINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.GUITHREADINFO>() };
-            if (Native.GetGUIThreadInfo(tid, ref gti) && gti.hwndCaret != IntPtr.Zero)
-            {
-                pt = new Native.POINT { X = gti.rcCaret.Left, Y = gti.rcCaret.Bottom };
-                Native.ClientToScreen(gti.hwndCaret, ref pt);
-                caretH = Math.Max(0, gti.rcCaret.Bottom - gti.rcCaret.Top);
-                haveCaret = pt.X != 0 || pt.Y != 0;
-            }
-        }
-        if (!haveCaret) { Native.GetCursorPos(out pt); caretH = 0; }
-
-        var mon = Native.MonitorFromPoint(pt, 2 /* NEAREST */);
-        var mi = new Native.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>() };
-        Native.GetMonitorInfo(mon, ref mi);
-        double scale = 1;
-        if (Native.GetDpiForMonitor(mon, 0, out uint dpi, out _) == 0) scale = dpi / 96.0;
-        int w = (int)Math.Round(_wDip * scale), h = (int)Math.Round(_hDip * scale), gap = (int)(6 * scale);
-        var wa = mi.rcWork;
-
-        int x = pt.X, y = pt.Y + gap;
-        _expandDown = true;      // below the anchor: unfold top → bottom …
-        if (y + h > wa.Bottom)   // … unless there is no room below: unfold bottom → top instead
-        {
-            y = pt.Y - caretH - h - gap;
-            _expandDown = false;
-        }
-        x = Math.Clamp(x, wa.Left + gap, Math.Max(wa.Left + gap, wa.Right - w - gap));
-        y = Math.Clamp(y, wa.Top + gap, Math.Max(wa.Top + gap, wa.Bottom - h - gap));
+        var (x, y, w, h, down) = PanelPlacement.Calculate(anchor, _wDip, _hDip);
+        _expandDown = down;
         SetPlacement(x, y, w, h);
-    }
-
-    /// <summary>Opens where the user last dragged it, if that spot is still on a connected monitor.</summary>
-    bool TryPlaceRemembered()
-    {
-        var s = App.Current.Settings;
-        if (s.PanelX is not int x || s.PanelY is not int y) return false;
-        // a point a little inside the panel's top-left must be on some monitor (monitor may have been unplugged)
-        var mon = Native.MonitorFromPoint(new Native.POINT { X = x + 40, Y = y + 20 }, 0 /* NULL */);
-        if (mon == IntPtr.Zero) return false;
-        var mi = new Native.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>() };
-        Native.GetMonitorInfo(mon, ref mi);
-        double scale = 1;
-        if (Native.GetDpiForMonitor(mon, 0, out uint dpi, out _) == 0) scale = dpi / 96.0;
-        int w = (int)Math.Round(_wDip * scale), h = (int)Math.Round(_hDip * scale);
-        var wa = mi.rcWork;
-        x = Math.Clamp(x, wa.Left, Math.Max(wa.Left, wa.Right - w));
-        y = Math.Clamp(y, wa.Top, Math.Max(wa.Top, wa.Bottom - h));
-        _expandDown = true; // a remembered spot has no anchor edge: unfold downward from its top
-        SetPlacement(x, y, w, h);
-        return true;
     }
 
     void SetPlacement(int x, int y, int w, int h)

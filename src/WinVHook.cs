@@ -18,7 +18,7 @@ public sealed class WinVHook : IDisposable
     IntPtr _hook;
     bool _swallowingV;
 
-    public event Action? Pressed;
+    public event Action<IntPtr>? Pressed;
 
     /// <summary>
     /// The hook lives on its own thread with its own message loop. Windows silently drops a low-level
@@ -77,7 +77,8 @@ public sealed class WinVHook : IDisposable
                         // A harmless key between Win-down and Win-up keeps the Start menu closed.
                         // Sent from the hook thread right after this callback, so it works even if the UI is busy.
                         _hookThread.BeginInvoke(() => Native.Send(Native.Key(Native.VK_DUMMY, false), Native.Key(Native.VK_DUMMY, true)));
-                        _ui.BeginInvoke(() => Pressed?.Invoke());
+                        var target = Native.GetForegroundWindow();
+                        _ui.BeginInvoke(() => Pressed?.Invoke(target));
                     }
                     return new IntPtr(1);
                 }

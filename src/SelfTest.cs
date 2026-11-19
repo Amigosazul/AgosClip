@@ -61,7 +61,8 @@ internal static class SelfTest
                 FeedbackTests(app);
             }
             Seed(app);
-            AnimationTests(app, outDir);
+            PlacementTests();
+            AnimationTests(outDir);
             Snapshots(outDir);
             if (!animationOnly && Environment.GetEnvironmentVariable("AGOSCLIP_UPDATE_TEST") == "1") UpdateTest();
         }
@@ -310,14 +311,71 @@ internal static class SelfTest
         Render(g, w, h, path);
     }
 
-    static void AnimationTests(App app, string outDir)
+    static void PlacementTests()
+    {
+        var cursor = new Native.POINT { X = -450, Y = 410 };
+        var work = new Native.RECT { Left = -1200, Top = 0, Right = 0, Bottom = 900 };
+        var field = new Native.RECT { Left = -1100, Top = 60, Right = -800, Bottom = 90 };
+        var anchor = new PanelAnchor(cursor, field);
+        var below = PanelPlacement.Calculate(anchor, work, 400, 580, 6);
+        Check(below.X == field.Left && below.Y == field.Bottom + 6 && below.ExpandDown,
+            "focused field takes priority over a distant pointer on negative screen coordinates");
+        field.Top = 810;
+        field.Bottom = 850;
+        var above = PanelPlacement.Calculate(anchor with { Field = field }, work, 400, 580, 6);
+        Check(above.Y + above.Height == field.Top - 6 && !above.ExpandDown,
+            "field near the bottom opens upward without overlapping the field");
+        field.Top = 410;
+        field.Bottom = 450;
+        var beside = PanelPlacement.Calculate(anchor with { Field = field }, work, 400, 580, 6);
+        Check(beside.X == field.Right + 6 && beside.Y + beside.Height <= work.Bottom,
+            "panel opens beside a field when it fits on neither vertical edge");
+        var atCursor = PanelPlacement.Calculate(new PanelAnchor(new Native.POINT { X = -850, Y = 120 }), work, 400, 580, 6);
+        Check(atCursor.X == -850 && atCursor.Y == 126 && atCursor.ExpandDown,
+            "without a focused field the panel opens by the mouse");
+
+        var input = new System.Windows.Controls.TextBox { Width = 200, Height = 28 };
+        System.Windows.Input.InputMethod.SetIsInputMethodEnabled(input, false);
+        var button = new System.Windows.Controls.Button { Content = "No text focus", Width = 200, Height = 28 };
+        var controls = new System.Windows.Controls.StackPanel();
+        controls.Children.Add(input);
+        controls.Children.Add(button);
+        var host = new Window { Title = "AgosClip placement test", Width = 300, Height = 150,
+            WindowStartupLocation = WindowStartupLocation.CenterScreen, Content = controls };
+        try
+        {
+            host.Show();
+            var hwnd = new System.Windows.Interop.WindowInteropHelper(host).Handle;
+            Native.ForceForeground(hwnd);
+
+            PanelAnchor Capture(UIElement element)
+            {
+                element.Focus();
+                Pump(60);
+                var capture = PanelPlacement.CaptureAsync(hwnd);
+                while (!capture.IsCompleted) Pump(40);
+                return capture.GetAwaiter().GetResult();
+            }
+
+            var edit = Capture(input);
+            var expected = input.PointToScreen(new Point());
+            Check(edit.Field is { } rect && Math.Abs(rect.Left - expected.X) <= 2 && Math.Abs(rect.Top - expected.Y) <= 2,
+                $"UI Automation captures a real focused WPF text box (field {edit.Field.HasValue})");
+            input.IsReadOnly = true;
+            var readOnly = Capture(input);
+            Check(readOnly.Field == null && readOnly.Caret == null, "read-only text box uses the mouse");
+            var none = Capture(button);
+            Check(none.Field == null && none.Caret == null, "switching focus to a button uses the mouse");
+        }
+        finally { host.Close(); }
+    }
+
+    static void AnimationTests(string outDir)
     {
         var panel = new PanelWindow();
         // Keep synthetic focus changes out of a real in-progress IME composition on the user's desktop.
         System.Windows.Input.InputMethod.SetIsInputMethodEnabled(panel.SearchBox, false);
         var hwnd = new System.Windows.Interop.WindowInteropHelper(panel).Handle;
-        var settings = app.Settings;
-        int? oldX = settings.PanelX, oldY = settings.PanelY;
         Native.GetCursorPos(out var cursor);
         var mon = Native.MonitorFromPoint(cursor, 2);
         var mi = new Native.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>() };
@@ -331,8 +389,7 @@ internal static class SelfTest
         try
         {
             Theme.Apply(false);
-            settings.PanelX = mi.rcWork.Left + 100;
-            settings.PanelY = mi.rcWork.Top + 60;
+            Native.SetCursorPos(mi.rcWork.Left + 100, mi.rcWork.Top + 60);
             int firstVisibleHeight = 0;
             panel.IsVisibleChanged += (_, _) =>
             {
@@ -352,7 +409,7 @@ internal static class SelfTest
             foreach (bool down in new[] { true, false })
             {
                 expandDown.SetValue(panel, down);
-                // PlaceNear uses a remembered spot; select the edge afterwards to sample either direction.
+                // Select the edge explicitly to sample either direction.
                 panel.Root.VerticalAlignment = down ? VerticalAlignment.Top : VerticalAlignment.Bottom;
                 Seek(0.5);
                 Pump(40);
@@ -417,7 +474,6 @@ internal static class SelfTest
             else { panel.HidePanel(); Check(!panel.IsVisible, "system animation preference closes instantly"); }
 
             // A real placement near the bottom must choose the upward anchor.
-            settings.PanelX = settings.PanelY = null;
             Native.SetCursorPos(mi.rcWork.Left + 100, mi.rcWork.Bottom - 15);
             panel.ShowFor(IntPtr.Zero);
             Pump(320);
@@ -429,7 +485,6 @@ internal static class SelfTest
         finally
         {
             panel.Close();
-            settings.PanelX = oldX; settings.PanelY = oldY;
             Native.SetCursorPos(cursor.X, cursor.Y);
         }
     }
@@ -489,17 +544,6 @@ internal static class SelfTest
                 Check(isv.VerticalOffset > 30 && isv.VerticalOffset < 90, $"one mouse-wheel notch scrolls about 3 lines ({isv.VerticalOffset:0}px)");
                 isv.ScrollToTop();
 
-                // remembered position
-                var st = App.Current.Settings;
-                st.PanelX = 120; st.PanelY = 90;
-                panel.PlaceNear(IntPtr.Zero);
-                Native.GetWindowRect(hwnd, out var r1);
-                Check(r1.Left == 120 && r1.Top == 90, $"opens where it was dragged to ({r1.Left},{r1.Top})");
-                st.PanelX = 50000; st.PanelY = 50000;
-                panel.PlaceNear(IntPtr.Zero);
-                Native.GetWindowRect(hwnd, out var r2);
-                Check(r2.Left < 10000, "a remembered spot on an unplugged monitor is ignored");
-                st.PanelX = st.PanelY = null;
             }
 
             if (glass)

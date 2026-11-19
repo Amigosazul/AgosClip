@@ -89,7 +89,6 @@ public static class Feedback
         sb.AppendLine($"RetentionDays={st.RetentionDays} TakeOverWinV={st.TakeOverWinV} PasteAfterSelect={st.PasteAfterSelect} " +
                       $"RecordImages={st.RecordImages} Glass={st.Glass} StartWithWindows={st.StartWithWindows} AutoCheckUpdates={st.AutoCheckUpdates}");
         sb.AppendLine($"Paused={App.Paused} DataLocation={(st.DataLocation == null ? "(default)" : st.DataLocation)} DataDir={Settings.DataDir}");
-        sb.AppendLine($"PanelPosition={(st.PanelX is int x ? $"{x},{st.PanelY}" : "(follow caret)")}");
         sb.AppendLine($"Install dir: {AppContext.BaseDirectory}");
         sb.AppendLine();
         sb.AppendLine("== History statistics (counts only) ==");
