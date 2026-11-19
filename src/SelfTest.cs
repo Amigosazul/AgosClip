@@ -21,6 +21,14 @@ internal static class SelfTest
     static readonly StringBuilder Report = new();
     static int _fails;
 
+    /// <summary>
+    /// False in a non-interactive session (e.g. over SSH, session 0): cursor and foreground APIs fail with
+    /// ERROR_REQUIRES_INTERACTIVE_WINDOWSTATION, so tests that move the mouse or need focus are skipped.
+    /// </summary>
+    static bool InteractiveDesktop => Native.GetCursorPos(out _);
+
+    static void Skip(string name) => Report.AppendLine("SKIP " + name + " (needs an interactive desktop)");
+
     static void Check(bool ok, string name)
     {
         Report.AppendLine((ok ? "PASS " : "FAIL ") + name);
@@ -41,8 +49,11 @@ internal static class SelfTest
 
     static DateOnly Today => DateOnly.FromDateTime(DateTime.Now);
 
+    static string _outDir = ".";
+
     public static int Run(App app, string outDir, bool animationOnly = false)
     {
+        _outDir = outDir;
         // Self-tests must use an explicitly configured data directory, never the normal default.
         if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AGOSCLIP_DATA")))
             throw new InvalidOperationException("Self-test requires AGOSCLIP_DATA to point at an isolated test folder. Use tools/selftest.ps1.");
@@ -499,7 +510,8 @@ internal static class SelfTest
         controls.Children.Add(button);
         var host = new Window { Title = "AgosClip placement test", Width = 300, Height = 150,
             WindowStartupLocation = WindowStartupLocation.CenterScreen, Content = controls };
-        try
+        if (!InteractiveDesktop) Skip("UI Automation focused-field placement: edit / read-only / button (3 checks)");
+        else try
         {
             host.Show();
             var hwnd = new System.Windows.Interop.WindowInteropHelper(host).Handle;
@@ -631,13 +643,17 @@ internal static class SelfTest
             else { panel.HidePanel(); Check(!panel.IsVisible, "system animation preference closes instantly"); }
 
             // A real placement near the bottom must choose the upward anchor.
-            Native.SetCursorPos(mi.rcWork.Left + 100, mi.rcWork.Bottom - 15);
-            panel.ShowFor(IntPtr.Zero);
-            Pump(320);
-            Check(!(bool)expandDown.GetValue(panel)! && panel.Root.VerticalAlignment == VerticalAlignment.Bottom,
-                "placement near the work-area bottom unfolds upward");
-            panel.HidePanel();
-            Pump(240);
+            if (InteractiveDesktop)
+            {
+                Native.SetCursorPos(mi.rcWork.Left + 100, mi.rcWork.Bottom - 15);
+                panel.ShowFor(IntPtr.Zero);
+                Pump(320);
+                Check(!(bool)expandDown.GetValue(panel)! && panel.Root.VerticalAlignment == VerticalAlignment.Bottom,
+                    "placement near the work-area bottom unfolds upward");
+                panel.HidePanel();
+                Pump(240);
+            }
+            else Skip("placement near the work-area bottom unfolds upward");
         }
         finally
         {
@@ -832,7 +848,7 @@ internal static class SelfTest
               && txt.Contains("%USERPROFILE%"), "user folder and PC name are redacted");
         var url = Feedback.IssueUrl(Path.GetFileName(path));
         Check(url.StartsWith("https://github.com/Amigosazul/AgosClip/issues/new?title=") && url.Length < 6000, $"issue link is valid ({url.Length} chars)");
-        File.Copy(path, Path.Combine(Path.GetDirectoryName(Settings.ConfigDir)!, "agosclip-selftest", "diagnostics-sample.txt"), true);
+        File.Copy(path, Path.Combine(_outDir, "diagnostics-sample.txt"), true); // kept with the screenshots for review
         File.Delete(path);
     }
 }
