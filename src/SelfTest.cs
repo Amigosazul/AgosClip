@@ -413,7 +413,7 @@ internal static class SelfTest
         Check(u.Sha256?.Length == 64, "update has a trusted SHA-256 (GitHub API digest / latest.json)");
         string lastSource = "";
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var d = Updater.DownloadAsync(u, new Progress<DownloadProgress>(p => { if (p.Note == null) lastSource = p.Source; }));
+        var d = Updater.DownloadAsync(u, new Progress<DownloadProgress>(p => { if (p.Note == null && p.Source.Length > 0) lastSource = p.Source; }));
         while (!d.IsCompleted) Pump(200);
         if (d.IsFaulted) { Check(false, "download: " + d.Exception!.InnerException!.Message); return; }
         Check(File.Exists(d.Result) && new FileInfo(d.Result).Length == u.Size,

@@ -247,35 +247,193 @@ public static class Updater
         if (File.Exists(path) && await HashOf(path, ct) == expected) return path; // already downloaded earlier
 
         long total = u.Size;
-        int attempt = 0;
-        var bad = new HashSet<string>();
-        while (true)
+        if (total > 0)
         {
-            var live = ranked.Where(r => !bad.Contains(r.Name)).ToList();
-            if (live.Count == 0)
+            // pieces in parallel from every working source: on slow links the speeds add up
+            await ParallelDownload(ranked, part, total, progress, ct);
+        }
+        else
+        {
+            // size unknown (shouldn't happen): one source at a time, switching + resuming on stalls
+            int attempt = 0;
+            var bad = new HashSet<string>();
+            while (true)
             {
-                if (++attempt >= 3) throw new HttpRequestException("各下载线路都中断了");
-                bad.Clear();             // give every source another round
-                live = ranked;
+                var live = ranked.Where(r => !bad.Contains(r.Name)).ToList();
+                if (live.Count == 0)
+                {
+                    if (++attempt >= 3) throw new HttpRequestException("各下载线路都中断了");
+                    bad.Clear();
+                    live = ranked;
+                }
+                var src = live[0];
+                long have = File.Exists(part) ? new FileInfo(part).Length : 0;
+                var outcome = await DownloadFrom(src, part, have, total, live.Count > 1, progress, ct);
+                if (outcome.Total > 0) total = outcome.Total;
+                if (outcome.Done) break;
+                App.Log($"update: {src.Name} {outcome.Reason}; switching");
+                bad.Add(src.Name);
             }
-            var src = live[0];
-            long have = File.Exists(part) ? new FileInfo(part).Length : 0;
-            if (total > 0 && have >= total) break;
-            var outcome = await DownloadFrom(src, part, have, total, live.Count > 1, progress, ct);
-            if (outcome.Total > 0) total = outcome.Total;
-            if (outcome.Done) break;
-            App.Log($"update: {src.Name} {outcome.Reason}; switching");
-            bad.Add(src.Name);
         }
 
         var actual = await HashOf(part, ct);
         if (actual != expected)
         {
             File.Delete(part);
+            try { File.Delete(part + ".chunks"); } catch { }
             throw new InvalidDataException("下载的文件校验不通过，已删除。请重试。");
         }
         File.Move(part, path, true);
         return path;
+    }
+
+    const int ChunkSize = 1 << 20; // 1 MB pieces
+
+    /// <summary>
+    /// Splits the file into 1 MB pieces and fetches them concurrently from all working sources (the fastest
+    /// gets two connections). A failed or stalled piece goes back in the queue; a source that keeps failing is
+    /// dropped. When the queue runs dry, idle connections re-fetch pieces still in flight on slow ones.
+    /// Finished pieces are recorded in "&lt;part&gt;.chunks" so a later attempt resumes.
+    /// </summary>
+    static async Task ParallelDownload(List<(string Name, string Url, double Speed)> ranked, string part, long total,
+        IProgress<DownloadProgress>? progress, CancellationToken ct)
+    {
+        int count = (int)((total + ChunkSize - 1) / ChunkSize);
+        var mapFile = part + ".chunks";
+        var done = new bool[count];
+        if (File.Exists(part) && new FileInfo(part).Length == total && File.Exists(mapFile))
+        {
+            foreach (var t in File.ReadAllText(mapFile).Split(',', StringSplitOptions.RemoveEmptyEntries))
+                if (int.TryParse(t, out var i) && i >= 0 && i < count) done[i] = true;
+        }
+        else
+        {
+            try { File.Delete(mapFile); } catch { }
+        }
+
+        using var handle = File.OpenHandle(part, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
+        if (RandomAccess.GetLength(handle) != total) RandomAccess.SetLength(handle, total);
+
+        var gate = new object();
+        var queue = new Queue<int>(Enumerable.Range(0, count).Where(i => !done[i]));
+        var inFlight = new Dictionary<int, int>(); // chunk → connections working on it
+        long bytesDone = done.Count(d => d) * (long)ChunkSize;
+        long liveBytes = 0;                         // bytes of unfinished pieces, for smooth progress
+        int remaining = queue.Count;
+        if (remaining == 0) return;
+        App.Log($"update: parallel download, {remaining}/{count} pieces left, sources: {string.Join(", ", ranked.Select(r => r.Name))}");
+
+        using var allDone = new CancellationTokenSource();
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, allDone.Token);
+
+        int? Take()
+        {
+            lock (gate)
+            {
+                if (remaining == 0) return null;
+                while (queue.Count > 0)
+                {
+                    int c = queue.Dequeue();
+                    if (done[c]) continue;
+                    inFlight[c] = inFlight.GetValueOrDefault(c) + 1;
+                    return c;
+                }
+                // endgame: help with a piece someone else (maybe slow) is still fetching
+                var slow = inFlight.Where(kv => kv.Value == 1 && !done[kv.Key]).Select(kv => (int?)kv.Key).FirstOrDefault();
+                if (slow is int sc) inFlight[sc] = 2;
+                return slow;
+            }
+        }
+
+        void Release(int c, bool ok)
+        {
+            lock (gate)
+            {
+                inFlight[c] = inFlight.GetValueOrDefault(c) - 1;
+                if (inFlight[c] <= 0) inFlight.Remove(c);
+                if (ok && !done[c])
+                {
+                    done[c] = true;
+                    remaining--;
+                    bytesDone += Math.Min(ChunkSize, total - (long)c * ChunkSize);
+                    try { File.AppendAllText(mapFile, c + ","); } catch { }
+                    if (remaining == 0) allDone.Cancel();
+                }
+                else if (!ok && !done[c] && !inFlight.ContainsKey(c)) queue.Enqueue(c);
+            }
+        }
+
+        async Task Worker((string Name, string Url, double Speed) src)
+        {
+            int failures = 0;
+            var buf = new byte[1 << 16];
+            while (!linked.IsCancellationRequested)
+            {
+                if (Take() is not int c) { await Task.Delay(300, linked.Token).ContinueWith(_ => { }); if (Volatile.Read(ref remaining) == 0) return; continue; }
+                long from = (long)c * ChunkSize, to = Math.Min(total, from + ChunkSize) - 1;
+                long got = 0;
+                bool ok = false;
+                try
+                {
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(linked.Token);
+                    cts.CancelAfter(TimeSpan.FromSeconds(60)); // a 1 MB piece slower than ~17 KB/s → give it to someone else
+                    using var req = new HttpRequestMessage(HttpMethod.Get, src.Url);
+                    req.Headers.Range = new RangeHeaderValue(from, to);
+                    using var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+                    if (resp.StatusCode != HttpStatusCode.PartialContent) throw new IOException($"no range support ({(int)resp.StatusCode})");
+                    await using var st = await resp.Content.ReadAsStreamAsync(cts.Token);
+                    var piece = new byte[to - from + 1];
+                    int n;
+                    while (got < piece.Length && (n = await st.ReadAsync(piece.AsMemory((int)got), cts.Token)) > 0)
+                    {
+                        got += n;
+                        Interlocked.Add(ref liveBytes, n);
+                    }
+                    if (got != piece.Length) throw new IOException("short piece");
+                    lock (gate) { if (!done[c]) RandomAccess.Write(handle, piece, from); }
+                    ok = true;
+                    failures = 0;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception ex)
+                {
+                    if (allDone.IsCancellationRequested) return;
+                    failures++;
+                    App.Log($"update: {src.Name} piece {c} failed ({ex.GetType().Name}: {ex.Message})");
+                }
+                finally
+                {
+                    Interlocked.Add(ref liveBytes, -got);
+                    Release(c, ok);
+                }
+                if (failures >= 3) { App.Log($"update: dropping {src.Name}"); return; }
+            }
+        }
+
+        // two connections on the fastest source, one on each of the others (max 5)
+        var plan = new List<(string, string, double)> { ranked[0] };
+        plan.AddRange(ranked);
+        var workers = plan.Take(5).Select(src => Task.Run(() => Worker(src))).ToList();
+
+        var sw = Stopwatch.StartNew();
+        long lastBytes = bytesDone; double speed = 0;
+        while (workers.Any(w => !w.IsCompleted))
+        {
+            await Task.WhenAny(Task.WhenAll(workers), Task.Delay(1000, ct));
+            ct.ThrowIfCancellationRequested();
+            long now;
+            lock (gate) now = bytesDone;
+            now += Interlocked.Read(ref liveBytes);
+            speed = speed == 0 ? (now - lastBytes) / Math.Max(0.2, sw.Elapsed.TotalSeconds) : speed * 0.6 + 0.4 * (now - lastBytes) / Math.Max(0.2, sw.Elapsed.TotalSeconds);
+            lastBytes = now;
+            sw.Restart();
+            int active = workers.Count(w => !w.IsCompleted);
+            if (active == 0) break;
+            progress?.Report(new DownloadProgress(Math.Min(1, (double)now / total), $"{active} 条线路", speed));
+        }
+        await Task.WhenAll(workers); // surface cancellation
+        if (Volatile.Read(ref remaining) > 0) throw new HttpRequestException($"下载中断（还差 {remaining} 块），再点一次会接着下");
+        try { File.Delete(mapFile); } catch { }
     }
 
     sealed record Outcome(bool Done, long Total, string Reason);
