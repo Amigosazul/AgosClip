@@ -22,6 +22,8 @@ public partial class PanelWindow : Window
     SortedDictionary<DateOnly, int> _counts = new();
     DateOnly _calMonth;
     readonly DispatcherTimer _searchDebounce;
+    bool _searchOpen;
+    int _searchAnimationVersion;
 
     static Store Store => App.Current.Store;
 
@@ -100,8 +102,7 @@ public partial class PanelWindow : Window
     {
         Activate();
         Native.ForceForeground(_hwnd);
-        SearchBox.Focus();
-        Keyboard.Focus(SearchBox);
+        FocusPanelInput();
     }
 
     // ───────────── moving ─────────────
@@ -147,10 +148,7 @@ public partial class PanelWindow : Window
         Glass.Apply(this);
         PausedBadge.Visibility = App.Paused ? Visibility.Visible : Visibility.Collapsed;
 
-        _searchDebounce.Stop();
-        SearchBox.TextChanged -= Search_TextChanged;
-        SearchBox.Text = "";
-        SearchBox.TextChanged += Search_TextChanged;
+        SetSearchOpen(false, animate: false, focus: false);
         RebuildCards(null);
         LoadItems(0);
 
@@ -161,8 +159,7 @@ public partial class PanelWindow : Window
         PlayOpenAnimation();
         Activate();
         Native.ForceForeground(_hwnd);
-        SearchBox.Focus();
-        Keyboard.Focus(SearchBox);
+        FocusPanelInput();
         ScrollCardsToStart();
     }
 
@@ -202,7 +199,11 @@ public partial class PanelWindow : Window
     void FinishAnimation(double progress)
     {
         ++_animationVersion; // a replaced close must never hide a newly reopened panel
-        if (progress == 0 && _closing) Hide(); // hide BEFORE resetting any animation state
+        if (progress == 0 && _closing)
+        {
+            Hide(); // hide BEFORE resetting search or animation state
+            SetSearchOpen(false, animate: false, focus: false);
+        }
         SetValue(AnimProgressProperty, progress);
         BeginAnimation(AnimProgressProperty, null);
         ApplyAnimRect(); // also initialize a new placement when the progress value has not changed
@@ -231,6 +232,91 @@ public partial class PanelWindow : Window
         Native.SetWindowPos(_hwnd, IntPtr.Zero, _fx, y, _fw, h, 0x0004 | 0x0010); // NOZORDER | NOACTIVATE
     }
 
+    // ───────────── search ─────────────
+
+    void FocusPanelInput()
+    {
+        if (_searchOpen)
+        {
+            SearchBox.Focus();
+            Keyboard.Focus(SearchBox);
+        }
+        else
+        {
+            // The window keeps arrow/Enter shortcuts without focusing a hidden text field.
+            Focus();
+            Keyboard.Focus(this);
+        }
+    }
+
+    void Search_Click(object sender, RoutedEventArgs e) => SetSearchOpen(!_searchOpen);
+
+    void SetSearchOpen(bool open, bool animate = true, bool focus = true)
+    {
+        _searchOpen = open;
+        int animationVersion = ++_searchAnimationVersion;
+        SearchBox.IsEnabled = open;
+        SearchReveal.IsHitTestVisible = open;
+        SearchButton.ToolTip = open ? "收起搜索 (Esc)" : "搜索全部历史 (Ctrl+F)";
+        System.Windows.Automation.AutomationProperties.SetName(SearchButton, open ? "收起搜索" : "搜索全部历史");
+        if (open)
+        {
+            CalOpen = false;
+            SearchReveal.Visibility = Visibility.Visible;
+            SearchButton.SetResourceReference(ForegroundProperty, "Accent");
+            SearchButton.SetResourceReference(BackgroundProperty, "SelBg");
+        }
+        else
+        {
+            SearchButton.ClearValue(ForegroundProperty);
+            SearchButton.ClearValue(BackgroundProperty);
+            bool pendingSearch = _searchDebounce.IsEnabled;
+            _searchDebounce.Stop();
+            bool hadQuery = SearchBox.Text.Length > 0;
+            SearchBox.TextChanged -= Search_TextChanged;
+            SearchBox.Clear();
+            SearchBox.TextChanged += Search_TextChanged;
+            // The textbox may already be empty while a debounced clear has not refreshed the list.
+            if (hadQuery || pendingSearch) LoadItems(0);
+        }
+
+        double height = open ? 41 : 0; // field + space for its focus ring
+        double opacity = open ? 1 : 0;
+        if (animate && !Snapshot && SystemParameters.ClientAreaAnimation && IsVisible)
+        {
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var duration = TimeSpan.FromMilliseconds(open ? 190 : 150);
+            // Explicit starts make rapid toggles reverse from the current visual state.
+            var reveal = new DoubleAnimation(SearchReveal.ActualHeight, height, duration)
+                { EasingFunction = ease };
+            if (!open) reveal.Completed += (_, _) =>
+            {
+                // Replaced WPF clocks can still complete; only the latest close may hide the row.
+                if (animationVersion == _searchAnimationVersion && !_searchOpen)
+                    SearchReveal.Visibility = Visibility.Collapsed;
+            };
+            SearchReveal.BeginAnimation(HeightProperty, reveal);
+            SearchReveal.BeginAnimation(OpacityProperty,
+                new DoubleAnimation(SearchReveal.Opacity, opacity, duration) { EasingFunction = ease });
+        }
+        else
+        {
+            SearchReveal.BeginAnimation(HeightProperty, null);
+            SearchReveal.BeginAnimation(OpacityProperty, null);
+            SearchReveal.Height = height;
+            SearchReveal.Opacity = opacity;
+            SearchReveal.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (focus)
+        {
+            // Layout must run before focusing the newly visible field; keep text/IME input available
+            // throughout the reveal, rather than waiting for the animation to finish.
+            SearchReveal.UpdateLayout();
+            FocusPanelInput();
+        }
+    }
+
     bool CalOpen
     {
         get => CalOverlay.Visibility == Visibility.Visible;
@@ -245,6 +331,7 @@ public partial class PanelWindow : Window
         Snapshot = true;
         RebuildCards(null);
         if (dayIndex >= 0) DayList.SelectedIndex = dayIndex;
+        SetSearchOpen(search != null, animate: false, focus: false);
         if (search != null) SearchBox.Text = search;
         LoadItems(0);
         if (openCalendar)
@@ -265,8 +352,15 @@ public partial class PanelWindow : Window
     {
         if (_sticky) SetSticky(false);
         CalOpen = false;
-        if (!IsVisible || _closing) return;
-        if (!AnimatePanel) { Hide(); FinishAnimation(1); return; }
+        if (!IsVisible) { SetSearchOpen(false, animate: false, focus: false); return; }
+        if (_closing) return;
+        if (!AnimatePanel)
+        {
+            Hide();
+            SetSearchOpen(false, animate: false, focus: false);
+            FinishAnimation(1);
+            return;
+        }
         _closing = true;
         AnimateTo(0);
     }
@@ -499,15 +593,23 @@ public partial class PanelWindow : Window
         DayList.ScrollIntoView(DayList.SelectedItem);
     }
 
-    void OnKey(object sender, KeyEventArgs e)
+    void OnKey(object sender, KeyEventArgs e) => e.Handled = HandleKey(e.Key, Keyboard.Modifiers);
+
+    internal bool HandleKey(Key key, ModifierKeys modifiers)
     {
-        bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+        bool ctrl = (modifiers & ModifierKeys.Control) != 0;
         bool searching = SearchBox.Text.Length > 0;
-        switch (e.Key)
+        switch (key)
         {
             case Key.Escape:
                 if (CalOpen) CalOpen = false;
-                else if (searching) SearchBox.Text = "";
+                else if (searching)
+                {
+                    SearchBox.Clear();
+                    _searchDebounce.Stop();
+                    LoadItems(0);
+                }
+                else if (_searchOpen) SetSearchOpen(false);
                 else HidePanel();
                 break;
             case Key.Down:
@@ -534,15 +636,19 @@ public partial class PanelWindow : Window
             case Key.Delete when !searching || ctrl:
                 if (Selected is { } d) DeleteItem(d);
                 break;
+            case Key.F when ctrl:
+                SetSearchOpen(true);
+                SearchBox.SelectAll();
+                break;
             case Key.P when ctrl:
                 if (Selected is { } p) TogglePin(p);
                 break;
             case Key.Tab:
                 break;
             default:
-                return;
+                return false;
         }
-        e.Handled = true;
+        return true;
     }
 
     // ───────────── event handlers ─────────────
@@ -595,7 +701,7 @@ public partial class PanelWindow : Window
         }
         LoadItems(0);
         ItemList.ScrollIntoView(ItemList.SelectedItem);
-        SearchBox.Focus();
+        FocusPanelInput();
     }
 
     ScrollViewer? CardScroller => FindChild<ScrollViewer>(DayList);
@@ -633,6 +739,9 @@ public partial class PanelWindow : Window
         var basis = CurrentCard is { IsPinned: false } c ? c.Date : DateOnly.FromDateTime(DateTime.Now);
         _calMonth = new DateOnly(basis.Year, basis.Month, 1);
         if (CalOpen) { CalOpen = false; return; }
+        // Keep the calendar anchored below the date strip in both search states.
+        double top = CalButton.TranslatePoint(new Point(0, CalButton.ActualHeight), CalOverlay).Y + 6;
+        CalCard.Margin = CalShadow.Margin = new Thickness(0, top, 14, 0);
         BuildCalendar();
         CalOpen = true;
     }
@@ -680,7 +789,7 @@ public partial class PanelWindow : Window
                 CalOpen = false;
                 var card = _cards.FirstOrDefault(x => !x.IsPinned && x.Date == date);
                 if (card != null) { DayList.SelectedItem = card; DayList.ScrollIntoView(card); }
-                SearchBox.Focus();
+                FocusPanelInput();
             };
             CalGrid.Children.Add(btn);
         }

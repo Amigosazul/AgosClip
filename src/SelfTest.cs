@@ -74,6 +74,163 @@ internal static class SelfTest
         return _fails == 0 ? 0 : 1;
     }
 
+    /// <summary>Focused WPF search checks; uses scratch data and never reads/writes the clipboard.</summary>
+    public static int RunSearchUi(App app, string outDir)
+    {
+        Directory.CreateDirectory(outDir);
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AGOSCLIP_DATA")))
+        {
+            Check(false, "--selftest-search requires AGOSCLIP_DATA pointing at a scratch folder");
+        }
+        else if (Directory.Exists(Settings.ConfigDir) && Directory.EnumerateFileSystemEntries(Settings.ConfigDir).Any())
+        {
+            Check(false, "--selftest-search requires an empty AGOSCLIP_DATA folder");
+        }
+        else try
+        {
+            app.Settings = new Settings();
+            app.Store = new Store();
+            app.Store.Upsert(ClipKind.Text, "Tsearch-today", "today clipboard entry", null, null, 0, 0, "记事本", At(0, 10, 0));
+            app.Store.Upsert(ClipKind.Text, "Tsearch-old", "git log --oneline", null, null, 0, 0, "Terminal", At(1, 10, 0));
+            app.Store.Upsert(ClipKind.Text, "Tsearch-source", "meeting notes", null, null, 0, 0, "微信", At(1, 11, 0));
+            foreach (bool dark in new[] { false, true }) SearchUiTests(outDir, dark);
+        }
+        catch (Exception ex) { Check(false, "exception: " + ex); }
+        finally { app.Store?.Dispose(); }
+        Report.AppendLine(_fails == 0 ? "ALL PASSED" : $"{_fails} FAILED");
+        File.WriteAllText(Path.Combine(outDir, "results.txt"), Report.ToString(), new UTF8Encoding(false));
+        return _fails == 0 ? 0 : 1;
+    }
+
+    static void SearchUiTests(string outDir, bool dark)
+    {
+        Theme.Apply(dark, true);
+        var tag = dark ? "dark" : "light";
+        var panel = new PanelWindow();
+        try
+        {
+            panel.ShowFor(IntPtr.Zero);
+            Pump(250);
+            // Keep test windows open if desktop focus changes, while exercising normal search animations.
+            panel.StickyBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            var root = (FrameworkElement)panel.Content;
+            bool FullyRevealed() => Math.Abs(panel.SearchReveal.Height - 41) < 0.01 &&
+                Math.Abs(panel.SearchReveal.ActualHeight - 41) <= 1 / VisualTreeHelper.GetDpi(panel.SearchReveal).DpiScaleY;
+            void ClickSearch() => panel.SearchButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            void Key(System.Windows.Input.Key key) => panel.RaiseEvent(new System.Windows.Input.KeyEventArgs(
+                System.Windows.Input.Keyboard.PrimaryDevice, PresentationSource.FromVisual(panel), 0, key)
+                { RoutedEvent = UIElement.PreviewKeyDownEvent });
+            Check(panel.SearchReveal.Visibility == Visibility.Collapsed && !panel.SearchBox.IsEnabled,
+                $"{tag}: search is collapsed by default");
+            Check(panel.ItemList.Items.Count == 1 && panel.IsKeyboardFocused, $"{tag}: collapsed panel has today's data and keyboard focus");
+            RenderOnGlass(root, Path.Combine(outDir, $"search-collapsed-{tag}.png"), dark, true);
+
+            ClickSearch();
+            Check(panel.SearchBox.IsKeyboardFocused, $"{tag}: clicking search focuses input immediately");
+            Pump(260);
+            Check(FullyRevealed() && panel.SearchReveal.Opacity == 1,
+                $"{tag}: reveal completes with full height and opacity");
+            RenderOnGlass(root, Path.Combine(outDir, $"search-expanded-{tag}.png"), dark, true);
+            panel.SearchBox.Text = "git";
+            Pump(240);
+            Check(panel.ItemList.Items.Count == 1 && panel.SectionTitle.Text.Contains("1 条结果") &&
+                ((ItemVm)panel.ItemList.Items[0]).Item.Text == "git log --oneline", $"{tag}: search finds history from another day");
+            RenderOnGlass(root, Path.Combine(outDir, $"search-results-{tag}.png"), dark, true);
+            panel.SearchBox.Text = "微信";
+            Pump(240);
+            Check(panel.ItemList.Items.Count == 1 && ((ItemVm)panel.ItemList.Items[0]).Item.Text == "meeting notes",
+                $"{tag}: search matches source app");
+            panel.SearchBox.Text = "no-matching-search-entry";
+            Pump(240);
+            Check(panel.ItemList.Items.Count == 0 && panel.EmptyState.Visibility == Visibility.Visible,
+                $"{tag}: unmatched query shows empty state");
+            Key(System.Windows.Input.Key.Escape);
+            Check(panel.SearchBox.Text.Length == 0 && panel.SearchReveal.IsHitTestVisible && panel.ItemList.Items.Count == 1,
+                $"{tag}: first Escape clears query and immediately restores today's items");
+            Key(System.Windows.Input.Key.Escape);
+            Pump(220);
+            Check(panel.SearchReveal.Visibility == Visibility.Collapsed && panel.IsVisible && panel.IsKeyboardFocused,
+                $"{tag}: next Escape collapses search and keeps panel keyboard focus");
+            Key(System.Windows.Input.Key.Right);
+            Check(panel.DayList.SelectedIndex == 1 && panel.ItemList.Items.Count == 2,
+                $"{tag}: date navigation works while search is collapsed");
+            ClickSearch();
+            Pump(220);
+            panel.SearchBox.Text = "git";
+            Pump(220);
+            ClickSearch();
+            Pump(220);
+            Check(panel.SearchBox.Text.Length == 0 && panel.ItemList.Items.Count == 2 && !panel.SearchBox.IsKeyboardFocused,
+                $"{tag}: search button clears query, restores selected date and releases hidden focus");
+
+            // Use the same key/modifier handler as WPF, without injecting keys into the user's desktop.
+            panel.HandleKey(System.Windows.Input.Key.F, System.Windows.Input.ModifierKeys.Control);
+            Pump(250);
+            Check(panel.SearchReveal.IsHitTestVisible && panel.SearchBox.IsKeyboardFocused,
+                $"{tag}: Ctrl+F opens and focuses search");
+            panel.SearchBox.Text = "git";
+            panel.HandleKey(System.Windows.Input.Key.F, System.Windows.Input.ModifierKeys.Control);
+            Pump(100);
+            Check(panel.SearchBox.SelectedText == "git", $"{tag}: repeated Ctrl+F selects query for replacement");
+            Pump(150);
+            panel.SearchBox.Clear(); // no dispatcher pump: the old search results are still displayed
+            Key(System.Windows.Input.Key.Escape);
+            Check(panel.ItemList.Items.Count == 2 && !panel.SectionTitle.Text.StartsWith("搜索"),
+                $"{tag}: clearing then immediately collapsing flushes the pending date refresh");
+            Pump(220);
+            ClickSearch();
+            Pump(220);
+            panel.SearchBox.Text = "git";
+            Pump(220);
+            panel.SearchBox.Clear();
+            ClickSearch();
+            Check(panel.ItemList.Items.Count == 2 && panel.DayList.Opacity == 1,
+                $"{tag}: button collapse flushes a pending manual clear");
+            Pump(220);
+            ClickSearch();
+            Pump(220);
+            ClickSearch();
+            Pump(60);
+            ClickSearch();
+            Pump(60);
+            ClickSearch();
+            Pump(65);
+            if (SystemParameters.ClientAreaAnimation)
+                Check(panel.SearchReveal.Visibility == Visibility.Visible && panel.SearchReveal.ActualHeight > 0,
+                    $"{tag}: replaced close clock cannot hide the latest close animation early");
+            Pump(135);
+            Check(panel.SearchReveal.Visibility == Visibility.Collapsed && !panel.SearchBox.IsEnabled,
+                $"{tag}: rapid toggles finish in the requested collapsed state");
+            ClickSearch();
+            Pump(35);
+            ClickSearch();
+            Pump(35);
+            ClickSearch();
+            Pump(230);
+            Check(FullyRevealed() && panel.SearchBox.IsKeyboardFocused,
+                $"{tag}: rapid toggles finish in the requested expanded state");
+            panel.CalButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            Key(System.Windows.Input.Key.Escape);
+            Check(panel.CalOverlay.Visibility == Visibility.Collapsed && panel.SearchBox.IsEnabled,
+                $"{tag}: Escape dismisses calendar before search");
+            panel.HidePanel();
+            Pump(220);
+            panel.ShowFor(IntPtr.Zero);
+            Pump(250);
+            Check(panel.SearchReveal.Visibility == Visibility.Collapsed && panel.SearchBox.Text.Length == 0,
+                $"{tag}: reopening resets search to collapsed");
+            Key(System.Windows.Input.Key.Escape);
+            Pump(220);
+            Check(!panel.IsVisible, $"{tag}: Escape closes panel when search is collapsed");
+            panel.PrepareSnapshot(-1, "git");
+            panel.Show();
+            Pump(150);
+            Check(FullyRevealed() && panel.ItemList.Items.Count == 1,
+                $"{tag}: existing snapshot helper expands search for a query");
+        }
+        finally { panel.Close(); }
+    }
+
     static void StoreTests(Store s)
     {
         s.ClearAll(false);
