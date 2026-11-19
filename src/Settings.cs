@@ -19,6 +19,9 @@ public sealed class Settings
     public bool AutoCheckUpdates { get; set; } = true;
     /// <summary>Last version we showed a tray notice for, so each release is announced once.</summary>
     public string? NotifiedVersion { get; set; }
+    /// <summary>Where the user dragged the panel (physical px, top-left). Null = open near the caret/cursor.</summary>
+    public int? PanelX { get; set; }
+    public int? PanelY { get; set; }
 
     /// <summary>Custom folder for history.db + images; null = the default (ConfigDir).</summary>
     public string? DataLocation { get; set; }

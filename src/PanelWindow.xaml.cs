@@ -35,7 +35,16 @@ public partial class PanelWindow : Window
         Native.SetWindowLongPtr(_hwnd, -20, (IntPtr)((long)Native.GetWindowLongPtr(_hwnd, -20) | 0x80));
         // No system menu → DWM draws no caption buttons (the stray red ✕) over the glass frame.
         Native.SetWindowLongPtr(_hwnd, -16, (IntPtr)((long)Native.GetWindowLongPtr(_hwnd, -16) & ~0x00080000L & ~0x00020000L & ~0x00010000L));
-        Deactivated += (_, _) => { if (!_pasting && !Snapshot) HidePanel(); };
+        Deactivated += (_, _) => { if (!_pasting && !Snapshot && !_sticky) HidePanel(); };
+        // Remember the last window the user worked in, so a pinned panel knows where to paste.
+        _fgProc = (_, _, hwnd, _, _, _, _) =>
+        {
+            if (hwnd == IntPtr.Zero || hwnd == _hwnd) return;
+            Native.GetWindowThreadProcessId(hwnd, out uint pid);
+            if (pid != (uint)Environment.ProcessId) _lastExternal = hwnd;
+        };
+        _fgHook = Native.SetWinEventHook(Native.EVENT_SYSTEM_FOREGROUND, Native.EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, _fgProc, 0, 0, Native.WINEVENT_OUTOFCONTEXT);
+        Closed += (_, _) => { if (_fgHook != IntPtr.Zero) Native.UnhookWinEvent(_fgHook); };
         PreviewKeyDown += OnKey;
         _searchDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         _searchDebounce.Tick += (_, _) => { _searchDebounce.Stop(); if (!Snapshot) LoadItems(0); };
@@ -49,9 +58,72 @@ public partial class PanelWindow : Window
 
     // ───────────── show / hide ─────────────
 
+    readonly Native.WinEventProc _fgProc; // keep delegate alive
+    readonly IntPtr _fgHook;
+    IntPtr _lastExternal;
+    bool _sticky;
+
+    /// <summary>Pinned ("固定在桌面"): stays open when clicking elsewhere and after pasting.</summary>
+    public bool IsSticky => _sticky;
+
+    void SetSticky(bool on)
+    {
+        _sticky = on;
+        StickyBtn.Content = on ? "\uE840" : "\uE718"; // PinFill / Pin
+        if (on)
+        {
+            StickyBtn.SetResourceReference(ForegroundProperty, "Accent");
+            StickyBtn.SetResourceReference(BackgroundProperty, "SelBg");
+            StickyBtn.ToolTip = "已固定在桌面 · 点击取消";
+        }
+        else
+        {
+            StickyBtn.ClearValue(ForegroundProperty);
+            StickyBtn.ClearValue(BackgroundProperty);
+            StickyBtn.ToolTip = "固定在桌面：点别处或粘贴后不自动关闭";
+        }
+    }
+
+    void Sticky_Click(object sender, RoutedEventArgs e) => SetSticky(!_sticky);
+
+    /// <summary>Win+V while pinned but in the background: bring it forward instead of closing.</summary>
+    public void FocusSticky()
+    {
+        Activate();
+        Native.ForceForeground(_hwnd);
+        SearchBox.Focus();
+        Keyboard.Focus(SearchBox);
+    }
+
+    // ───────────── moving ─────────────
+
+    void Root_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        // only the header strip (title, grip, empty space) drags; buttons/fields/items handle their own clicks
+        if (e.Handled || e.GetPosition(Header).Y > Header.ActualHeight + 4) return;
+        var s = App.Current.Settings;
+        if (e.ClickCount == 2)
+        {
+            s.PanelX = s.PanelY = null;
+            s.Save();
+            PlaceNear(_target);
+            e.Handled = true;
+            return;
+        }
+        try { DragMove(); } catch (InvalidOperationException) { return; }
+        if (Native.GetWindowRect(_hwnd, out var r))
+        {
+            s.PanelX = r.Left;
+            s.PanelY = r.Top;
+            s.Save();
+        }
+        e.Handled = true;
+    }
+
     public void ShowFor(IntPtr target)
     {
         if (target == _hwnd || !Native.IsWindow(target)) target = IntPtr.Zero;
+        if (IsVisible && _sticky) { if (target != IntPtr.Zero) _target = target; FocusSticky(); return; }
         _target = target;
         Glass.Apply(this);
         PausedBadge.Visibility = App.Paused ? Visibility.Visible : Visibility.Collapsed;
@@ -110,14 +182,17 @@ public partial class PanelWindow : Window
     }
 
 
+    /// <summary>Closes the panel (✕, Esc, Win+V). Closing explicitly also un-pins it.</summary>
     public void HidePanel()
     {
+        if (_sticky) SetSticky(false);
         CalOpen = false;
         if (IsVisible) Hide();
     }
 
-    void PlaceNear(IntPtr target)
+    internal void PlaceNear(IntPtr target)
     {
+        if (TryPlaceRemembered()) return;
         Native.POINT pt = default;
         int caretH = 0;
         bool haveCaret = false;
@@ -148,6 +223,26 @@ public partial class PanelWindow : Window
         x = Math.Clamp(x, wa.Left + gap, Math.Max(wa.Left + gap, wa.Right - w - gap));
         y = Math.Clamp(y, wa.Top + gap, Math.Max(wa.Top + gap, wa.Bottom - h - gap));
         Native.SetWindowPos(_hwnd, new IntPtr(-1), x, y, 0, 0, 0x0001 | 0x0010); // NOSIZE | NOACTIVATE, topmost
+    }
+
+    /// <summary>Opens where the user last dragged it, if that spot is still on a connected monitor.</summary>
+    bool TryPlaceRemembered()
+    {
+        var s = App.Current.Settings;
+        if (s.PanelX is not int x || s.PanelY is not int y) return false;
+        // a point a little inside the panel's top-left must be on some monitor (monitor may have been unplugged)
+        var mon = Native.MonitorFromPoint(new Native.POINT { X = x + 40, Y = y + 20 }, 0 /* NULL */);
+        if (mon == IntPtr.Zero) return false;
+        var mi = new Native.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>() };
+        Native.GetMonitorInfo(mon, ref mi);
+        double scale = 1;
+        if (Native.GetDpiForMonitor(mon, 0, out uint dpi, out _) == 0) scale = dpi / 96.0;
+        int w = (int)Math.Round(Width * scale), h = (int)Math.Round(Height * scale);
+        var wa = mi.rcWork;
+        x = Math.Clamp(x, wa.Left, Math.Max(wa.Left, wa.Right - w));
+        y = Math.Clamp(y, wa.Top, Math.Max(wa.Top, wa.Bottom - h));
+        Native.SetWindowPos(_hwnd, new IntPtr(-1), x, y, 0, 0, 0x0001 | 0x0010);
+        return true;
     }
 
     // ───────────── data ─────────────
@@ -244,6 +339,14 @@ public partial class PanelWindow : Window
             {
                 EmptyText.Text = "无法写入剪贴板（图片文件可能已被删除）";
                 EmptyState.Visibility = Visibility.Visible;
+                return;
+            }
+            if (_sticky)
+            {
+                // stay open; paste into the window the user was last working in
+                var target = _lastExternal != IntPtr.Zero && Native.IsWindow(_lastExternal) ? _lastExternal : _target;
+                if (App.Current.Settings.PasteAfterSelect && target != IntPtr.Zero && Native.IsWindow(target))
+                    Paster.PasteInto(target, Dispatcher);
                 return;
             }
             HidePanel();

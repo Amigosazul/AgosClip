@@ -156,7 +156,12 @@ public partial class App : Application
     public void TogglePanel(IntPtr target)
     {
         if (_panel == null) return;
-        if (_panel.IsVisible) _panel.HidePanel();
+        if (_panel.IsVisible)
+        {
+            // pinned panel sitting in the background: Win+V brings it forward; a second Win+V closes it
+            if (_panel.IsSticky && !_panel.IsActive) _panel.FocusSticky();
+            else _panel.HidePanel();
+        }
         else ShowPanel(target);
     }
 

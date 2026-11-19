@@ -312,6 +312,28 @@ internal static class SelfTest
                 Check(panel.DayList.SelectedIndex == 0 && panel.SectionTitle.Text.StartsWith("固定"), "clicking a date card selects it (固定)");
                 panel.PrepareSnapshot(-1);
                 Pump(200);
+
+                // pin to desktop
+                panel.StickyBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                Check(panel.IsSticky && (string)panel.StickyBtn.Content == "\uE840", "pin button turns pin mode on");
+                Pump(200);
+                RenderOnGlass(root, Path.Combine(outDir, "panel-pinned-mode-light.png"), dark, glass);
+                panel.HidePanel();
+                Check(!panel.IsSticky, "closing the panel un-pins it");
+                panel.Show();
+                Pump(200);
+
+                // remembered position
+                var st = App.Current.Settings;
+                st.PanelX = 120; st.PanelY = 90;
+                panel.PlaceNear(IntPtr.Zero);
+                Native.GetWindowRect(hwnd, out var r1);
+                Check(r1.Left == 120 && r1.Top == 90, $"opens where it was dragged to ({r1.Left},{r1.Top})");
+                st.PanelX = 50000; st.PanelY = 50000;
+                panel.PlaceNear(IntPtr.Zero);
+                Native.GetWindowRect(hwnd, out var r2);
+                Check(r2.Left < 10000, "a remembered spot on an unplugged monitor is ignored");
+                st.PanelX = st.PanelY = null;
             }
 
             if (glass)
