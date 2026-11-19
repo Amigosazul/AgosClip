@@ -330,4 +330,9 @@ public partial class SettingsWindow : Window
     void Feedback_Click(object sender, RoutedEventArgs e) => App.Current.StartFeedback(this);
     void OpenLog_Click(object sender, RoutedEventArgs e) => Feedback.OpenLog();
     void OpenLogFolder_Click(object sender, RoutedEventArgs e) => Feedback.OpenLogFolder();
+
+    // ───────────── immersive title bar ─────────────
+
+    void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+    void CloseWindow_Click(object sender, RoutedEventArgs e) => Close();
 }

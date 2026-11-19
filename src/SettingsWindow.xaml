@@ -5,7 +5,60 @@
         WindowStartupLocation="CenterScreen" Icon="pack://application:,,,/Assets/AgosClip.ico"
         Background="{DynamicResource PanelBg}" Foreground="{DynamicResource Fg}"
         FontFamily="{StaticResource UiFont}" FontSize="13" UseLayoutRounding="True">
+    <!-- immersive title bar: no system caption; content (sidebar, glass) runs to the top edge.
+         The top 40 px still drags the window; our own minimise/close buttons sit in it. -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="40" GlassFrameThickness="-1" ResizeBorderThickness="0"
+                      UseAeroCaptionButtons="False" CornerRadius="0"/>
+    </WindowChrome.WindowChrome>
     <Window.Resources>
+        <!-- caption buttons (Win11 metrics: 46×32; close turns red) -->
+        <Style x:Key="CaptionBtn" TargetType="Button">
+            <Setter Property="Width" Value="46"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Foreground" Value="{DynamicResource Fg}"/>
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="{DynamicResource Track}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="b" Property="Opacity" Value="0.7"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="CloseBtn" TargetType="Button" BasedOn="{StaticResource CaptionBtn}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="Transparent" CornerRadius="0,8,0,0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="#C42B1C"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="#B22A1B"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <Style x:Key="Section" TargetType="Border">
             <Setter Property="Background" Value="{DynamicResource CardBg}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource CardBorder}"/>
@@ -167,7 +220,7 @@
         </Grid.ColumnDefinitions>
 
         <!-- Sidebar -->
-        <Border Background="{DynamicResource Track}" Padding="10,14,10,10">
+        <Border Background="{DynamicResource Track}" Padding="10,12,10,10">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,0,0,14">
                     <Image Source="pack://application:,,,/Assets/AgosClip.ico" Width="20" Height="20" Margin="0,0,8,0"/>
@@ -187,7 +240,7 @@
 
         <!-- Pages -->
         <ScrollViewer x:Name="PageScroll" Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <Grid Margin="22,18,22,18">
+            <Grid Margin="22,14,22,18">
 
                 <!-- 通用 -->
                 <StackPanel x:Name="PageGeneral">
@@ -316,5 +369,10 @@
                 </StackPanel>
             </Grid>
         </ScrollViewer>
+        <!-- caption buttons over the content column (immersive title bar) -->
+        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Panel.ZIndex="10">
+            <Button Style="{StaticResource CaptionBtn}" Content="&#xE921;" ToolTip="最小化" Click="Minimize_Click"/>
+            <Button Style="{StaticResource CloseBtn}" Content="&#xE8BB;" ToolTip="关闭" Click="CloseWindow_Click"/>
+        </StackPanel>
     </Grid>
 </Window>
