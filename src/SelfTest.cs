@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -51,6 +52,7 @@ internal static class SelfTest
             Theme.Apply(false);
             StoreTests(app.Store);
             ClipboardTests(app);
+            MoveTests(app);
             Seed(app);
             Snapshots(outDir);
             if (Environment.GetEnvironmentVariable("AGOSCLIP_UPDATE_TEST") == "1") UpdateTest();
@@ -175,7 +177,7 @@ internal static class SelfTest
         Clipboard.SetDataObject(shot2, true);
         Pump(2500);
         Check(s.ItemsOnDay(Today).Count(i => i.Kind == ClipKind.Image) == before + 2, "image next to an empty text format is captured");
-        var log = Path.Combine(Settings.DataDir, "agosclip.log");
+        var log = Path.Combine(Settings.ConfigDir, "agosclip.log");
         Check(File.Exists(log) && File.ReadAllText(log).Contains("→ image 500x300"), "capture decisions are logged");
 
         app.Settings.RecordImages = false;
@@ -332,10 +334,11 @@ internal static class SelfTest
             if (glass)
             {
                 var sw = new SettingsWindow { Left = -32000, Top = -32000, WindowStartupLocation = WindowStartupLocation.Manual };
+                sw.MaxHeight = double.PositiveInfinity; // screenshot the whole page, not just the scrolled part
                 sw.Show();
                 Pump(400);
                 Check(sw.Content is FrameworkElement, "settings window builds");
-                if (sw.Content is FrameworkElement sroot)
+                if ((sw.Content as System.Windows.Controls.Border)?.Child is System.Windows.Controls.ScrollViewer { Content: FrameworkElement sroot })
                     RenderOnGlass(sroot, Path.Combine(outDir, $"settings-{tag}.png"), dark, glass);
                 sw.Close();
             }
@@ -358,5 +361,46 @@ internal static class SelfTest
         Check(File.Exists(d.Result) && new FileInfo(d.Result).Length == u.Size,
             $"installer downloaded and SHA-256 verified ({u.Size / 1048576.0:0.#} MB in {sw.Elapsed.TotalSeconds:0} s)");
         File.Delete(d.Result);
+    }
+
+    static void Await(Task t)
+    {
+        while (!t.IsCompleted) Pump(50);
+        if (t.IsFaulted) throw t.Exception!.InnerException!;
+    }
+
+    static void MoveTests(App app)
+    {
+        var s = app.Store;
+        int before = s.DayCounts().Values.Sum();
+        var images = s.ItemsOnDay(Today).Where(i => i.Kind == ClipKind.Image).ToList();
+        var picked = Settings.ConfigDir + "-picked";
+        if (Directory.Exists(picked)) Directory.Delete(picked, true);
+        Directory.CreateDirectory(picked);
+        File.WriteAllText(Path.Combine(picked, "someone-elses-file.txt"), "x");
+        var target = DataMover.ResolveTarget(picked);
+        Check(target == Path.Combine(picked, "AgosClip"), "non-empty folder → data goes into an AgosClip subfolder");
+        Check(DataMover.Validate(Path.Combine(Settings.DataDir, "images")) != null, "moving into the current data folder is refused");
+
+        Await(DataMover.MoveAsync(s, app.Settings, target, false, null));
+        Check(Settings.DataDir == target && DataMover.HasData(target) && !DataMover.HasData(Settings.ConfigDir),
+            "data moved to the new folder and removed from the old one");
+        Check(s.DayCounts().Values.Sum() == before, $"all {before} items readable after the move");
+        Check(images.Count > 0 && images.All(i => File.Exists(Path.Combine(target, i.ImagePath!))), "image files moved along");
+        Check(File.Exists(Path.Combine(Settings.ConfigDir, "settings.json")) &&
+              File.ReadAllText(Path.Combine(Settings.ConfigDir, "settings.json")).Contains("-picked"), "settings stay in the config folder and remember the location");
+        s.Upsert(ClipKind.Text, Store.TextHash("written after move"), "written after move", null, null, 0, 0, null);
+        Check(s.Search("written after move").Count == 1, "new items are written in the new folder");
+
+        // reload from disk like a restart
+        var reloaded = Settings.Load();
+        Check(reloaded.ApplyDataLocation() && Settings.DataDir == target, "location survives a restart");
+
+        Await(DataMover.MoveAsync(s, app.Settings, Settings.ConfigDir, false, null));
+        Check(Settings.IsDefaultLocation(Settings.DataDir) && app.Settings.DataLocation == null && s.DayCounts().Values.Sum() == before + 1,
+            "moving back to the default location keeps everything");
+        Check(!Directory.Exists(target) && File.Exists(Path.Combine(picked, "someone-elses-file.txt")),
+            "old custom folder removed; unrelated files untouched");
+        Directory.Delete(picked, true);
     }
 }

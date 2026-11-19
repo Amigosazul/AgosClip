@@ -88,7 +88,7 @@ public sealed class ClipboardMonitor : IDisposable
 
     void CaptureCore(bool retry)
     {
-        if (App.Paused) return;
+        if (App.Paused || App.Moving) return;
         var data = GetData();
         string? source = SourceApp(out bool fromUs);
         string who = fromUs ? "self" : source ?? "?";

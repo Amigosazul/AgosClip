@@ -17,6 +17,8 @@ public partial class App : Application
 
     public static new App Current => (App)Application.Current;
     public static bool Paused { get; private set; }
+    /// <summary>True while the data folder is being moved: nothing is recorded and the panel stays closed.</summary>
+    public static bool Moving { get; set; }
 
     public Settings Settings { get; internal set; } = new();
     public Store Store { get; internal set; } = null!;
@@ -63,6 +65,9 @@ public partial class App : Application
         bool background = e.Args.Any(a => a.Equals("--background", StringComparison.OrdinalIgnoreCase));
 
         Settings = Settings.Load();
+        bool dataFolderMissing = !Settings.ApplyDataLocation();
+        if (dataFolderMissing) Log($"data folder missing: {Settings.DataLocation}; using {Settings.DataDir} for now");
+        Settings.RememberDataDir();
         bool firstRun = !Settings.FirstRunDone;
         if (firstRun)
         {
@@ -100,7 +105,13 @@ public partial class App : Application
         };
         _updateTimer.Start();
 
-        if (e.Args.Any(a => a == "--updated"))
+        if (dataFolderMissing)
+        {
+            _tray!.ShowBalloonTip(8000, "找不到数据文件夹",
+                $"{Settings.DataLocation} 不存在（移动硬盘没插上？）。这次先用默认位置记录，插上后重启 AgosClip 即可。",
+                Forms.ToolTipIcon.Warning);
+        }
+        else if (e.Args.Any(a => a == "--updated"))
         {
             _tray!.ShowBalloonTip(4000, "AgosClip 已更新", $"现在是 {Updater.Current.ToString(3)} 版。", Forms.ToolTipIcon.Info);
         }
@@ -151,7 +162,7 @@ public partial class App : Application
 
     public void ShowPanel(IntPtr target)
     {
-        if (_panel == null) return;
+        if (_panel == null || Moving) return;
         _panel.ShowFor(target);
     }
 
@@ -243,8 +254,8 @@ public partial class App : Application
         {
             lock (LogLock)
             {
-                Directory.CreateDirectory(Settings.DataDir);
-                var path = Path.Combine(Settings.DataDir, "agosclip.log");
+                Directory.CreateDirectory(Settings.ConfigDir);
+                var path = Path.Combine(Settings.ConfigDir, "agosclip.log");
                 if (File.Exists(path) && new FileInfo(path).Length > 1_000_000) File.Delete(path);
                 File.AppendAllText(path, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {msg}{Environment.NewLine}");
             }

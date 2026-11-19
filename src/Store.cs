@@ -26,15 +26,20 @@ public sealed class ClipItem
 /// <summary>SQLite-backed history. One row per distinct content (unique hash); copying again only refreshes the time.</summary>
 public sealed class Store : IDisposable
 {
-    readonly SqliteConnection _db;
+    SqliteConnection _db = null!;
     public static string ImagesDir => Path.Combine(Settings.DataDir, "images");
 
     public event Action? Changed;
 
-    public Store()
+    public Store() => Open();
+
+    public static string DbFile => Path.Combine(Settings.DataDir, "history.db");
+
+    /// <summary>(Re)opens the database in the current Settings.DataDir.</summary>
+    public void Open()
     {
         Directory.CreateDirectory(Settings.DataDir);
-        _db = new SqliteConnection($"Data Source={Path.Combine(Settings.DataDir, "history.db")}");
+        _db = new SqliteConnection($"Data Source={DbFile};Pooling=False");
         _db.Open();
         Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
         Exec(@"CREATE TABLE IF NOT EXISTS items(
@@ -54,6 +59,16 @@ public sealed class Store : IDisposable
                CREATE INDEX IF NOT EXISTS ix_items_created ON items(created_at);");
     }
 
+    /// <summary>Folds the WAL into history.db and closes it, so the file can be copied or moved.</summary>
+    public void Close()
+    {
+        try { Exec("PRAGMA wal_checkpoint(TRUNCATE);"); } catch { }
+        _db.Close();
+        _db.Dispose();
+    }
+
+    public void NotifyChanged() => Changed?.Invoke();
+
     void Exec(string sql)
     {
         using var c = _db.CreateCommand();
@@ -69,7 +84,7 @@ public sealed class Store : IDisposable
     /// <summary>Thread-safe: uses its own short-lived connection so it can run off the UI thread.</summary>
     public bool Exists(string hash)
     {
-        using var db = new SqliteConnection(_db.ConnectionString);
+        using var db = new SqliteConnection($"Data Source={DbFile};Pooling=False");
         db.Open();
         using var c = db.CreateCommand();
         c.CommandText = "SELECT 1 FROM items WHERE hash=$h";

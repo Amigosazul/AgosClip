@@ -177,11 +177,17 @@
                 <StackPanel>
                     <TextBlock Text="数据" Style="{StaticResource Heading}" Margin="0,0,0,4"/>
                     <TextBlock x:Name="DataPath" Style="{StaticResource Hint}"/>
-                    <TextBlock x:Name="Stats" Style="{StaticResource Hint}" Margin="0,2,0,12"/>
-                    <StackPanel Orientation="Horizontal">
-                        <Button Style="{StaticResource Btn}" Content="打开数据文件夹" Click="OpenFolder_Click"/>
-                        <Button Style="{StaticResource Btn}" Content="清空历史…" Click="Clear_Click"/>
-                    </StackPanel>
+                    <TextBlock x:Name="Stats" Style="{StaticResource Hint}" Margin="0,2,0,4"/>
+                    <TextBlock x:Name="MoveStatus" Style="{StaticResource Hint}" Margin="0,2,0,4" Visibility="Collapsed"
+                               Foreground="{DynamicResource Accent}"/>
+                    <WrapPanel Margin="0,8,0,0">
+                        <Button Style="{StaticResource Btn}" Content="打开数据文件夹" Click="OpenFolder_Click" Margin="0,0,8,8"/>
+                        <Button x:Name="MoveBtn" Style="{StaticResource Btn}" Content="更改位置…" Click="Move_Click" Margin="0,0,8,8"/>
+                        <Button x:Name="ResetBtn" Style="{StaticResource Btn}" Content="恢复默认位置" Click="ResetLocation_Click" Margin="0,0,8,8"/>
+                        <Button x:Name="ClearBtn" Style="{StaticResource Btn}" Content="清空历史…" Click="Clear_Click" Margin="0,0,8,8"/>
+                    </WrapPanel>
+                    <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
+                               Text="历史记录和图片会整体搬到新位置，确认复制完整后才删除原来的。设置和日志始终留在 %APPDATA%\AgosClip。"/>
                 </StackPanel>
             </Border>
 

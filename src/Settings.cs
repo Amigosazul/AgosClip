@@ -20,12 +20,51 @@ public sealed class Settings
     /// <summary>Last version we showed a tray notice for, so each release is announced once.</summary>
     public string? NotifiedVersion { get; set; }
 
-    /// <summary>%APPDATA%\AgosClip, or AGOSCLIP_DATA when set (used by --selftest).</summary>
-    public static string DataDir { get; } =
+    /// <summary>Custom folder for history.db + images; null = the default (ConfigDir).</summary>
+    public string? DataLocation { get; set; }
+
+    /// <summary>Where settings.json and the log live: %APPDATA%\AgosClip, or AGOSCLIP_DATA (used by --selftest). Never moves.</summary>
+    public static string ConfigDir { get; } =
         Environment.GetEnvironmentVariable("AGOSCLIP_DATA") is { Length: > 0 } d ? d
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AgosClip");
 
-    static string FilePath => Path.Combine(DataDir, "settings.json");
+    /// <summary>Where history.db and images\ live. Defaults to ConfigDir; the user can move it in settings.</summary>
+    public static string DataDir { get; private set; } = ConfigDir;
+
+    public static bool IsDefaultLocation(string dir) =>
+        string.Equals(Path.GetFullPath(dir).TrimEnd('\\'), Path.GetFullPath(ConfigDir).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Points DataDir at the saved location. Returns false (and stays on the default) if that folder is missing.</summary>
+    public bool ApplyDataLocation()
+    {
+        if (string.IsNullOrWhiteSpace(DataLocation) || IsDefaultLocation(DataLocation)) { DataDir = ConfigDir; return true; }
+        if (!Directory.Exists(DataLocation)) { DataDir = ConfigDir; return false; }
+        DataDir = Path.GetFullPath(DataLocation);
+        return true;
+    }
+
+    /// <summary>Switches DataDir (and the saved setting) to a folder. Callers move the files first.</summary>
+    public void SetDataLocation(string dir)
+    {
+        DataLocation = IsDefaultLocation(dir) ? null : Path.GetFullPath(dir);
+        ApplyDataLocation();
+        Save();
+        RememberDataDir();
+    }
+
+    /// <summary>Lets the uninstaller find a custom data folder.</summary>
+    public static void RememberDataDir()
+    {
+        if (Environment.GetEnvironmentVariable("AGOSCLIP_DATA") is { Length: > 0 }) return; // self-test: never touch the real registry
+        try
+        {
+            using var k = Registry.CurrentUser.CreateSubKey(@"Software\AgosClip");
+            k.SetValue("DataDir", DataDir);
+        }
+        catch { }
+    }
+
+    static string FilePath => Path.Combine(ConfigDir, "settings.json");
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
     public static Settings Load()
@@ -41,7 +80,7 @@ public sealed class Settings
 
     public void Save()
     {
-        Directory.CreateDirectory(DataDir);
+        Directory.CreateDirectory(ConfigDir);
         var tmp = FilePath + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(this, Json));
         File.Move(tmp, FilePath, true);

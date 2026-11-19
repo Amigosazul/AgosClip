@@ -49,7 +49,7 @@ public partial class SettingsWindow : Window
         TakeOverWinV.IsChecked = S.TakeOverWinV;
         PasteAfterSelect.IsChecked = S.PasteAfterSelect;
         StartWithWindows.IsChecked = S.StartWithWindows;
-        DataPath.Text = "位置：" + Settings.DataDir;
+        ShowLocation();
         var v = Assembly.GetExecutingAssembly().GetName().Version;
         Version.Text = $"AgosClip {v?.ToString(3)} · 剪贴板数据只保存在本机，只有检查更新时会联网";
         AutoUpdate.IsChecked = S.AutoCheckUpdates;
@@ -207,4 +207,74 @@ public partial class SettingsWindow : Window
     }
 
     void Page_Click(object sender, RoutedEventArgs e) => Updater.OpenReleasesPage(_update?.PageUrl);
+
+    // ───────────── data location ─────────────
+
+    void ShowLocation()
+    {
+        bool custom = !Settings.IsDefaultLocation(Settings.DataDir);
+        DataPath.Text = "位置：" + Settings.DataDir + (custom ? "（自定义）" : "（默认）");
+        ResetBtn.Visibility = custom || S.DataLocation != null ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    async void Move_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "选择保存剪贴板历史的文件夹",
+            InitialDirectory = Directory.Exists(Settings.DataDir) ? Path.GetDirectoryName(Settings.DataDir) : null,
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        await MoveTo(DataMover.ResolveTarget(dlg.FolderName));
+    }
+
+    async void ResetLocation_Click(object sender, RoutedEventArgs e)
+    {
+        if (Settings.IsDefaultLocation(Settings.DataDir))
+        {
+            // custom folder was missing at startup; we already run on the default → just forget it
+            S.SetDataLocation(Settings.ConfigDir);
+            ShowLocation();
+            return;
+        }
+        await MoveTo(Settings.ConfigDir);
+    }
+
+    async Task MoveTo(string target)
+    {
+        var problem = DataMover.Validate(target);
+        if (problem != null) { MessageBox.Show(this, problem, "更改位置", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+
+        bool existing = DataMover.HasData(target);
+        string question = existing
+            ? $"{target}\n\n这里已经有 AgosClip 的历史记录。改为使用这里的记录吗？\n\n当前位置的记录不会合并过去，会原样留在：\n{Settings.DataDir}"
+            : $"把历史记录和图片（约 {DataMover.CurrentSize() / 1048576.0:0.#} MB）移动到：\n\n{target}\n\n复制完整后会删除原来位置的文件。移动期间暂停记录。";
+        if (MessageBox.Show(this, question, "更改位置", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+
+        SetBusy(true, existing ? "正在切换…" : "正在移动…");
+        try
+        {
+            var progress = new Progress<string>(m => MoveStatus.Text = m);
+            await DataMover.MoveAsync(App.Current.Store, S, target, existing, progress);
+            MoveStatus.Text = existing ? "已切换到新位置的记录" : "移动完成";
+        }
+        catch (Exception ex)
+        {
+            App.Log("move data: " + ex);
+            MoveStatus.Text = "移动失败，数据仍在原来的位置：" + ex.Message;
+        }
+        finally
+        {
+            SetBusy(false, null);
+            ShowLocation();
+            UpdateStats();
+        }
+    }
+
+    void SetBusy(bool busy, string? msg)
+    {
+        MoveBtn.IsEnabled = ResetBtn.IsEnabled = ClearBtn.IsEnabled = !busy;
+        if (msg != null) MoveStatus.Text = msg;
+        MoveStatus.Visibility = Visibility.Visible;
+    }
 }
