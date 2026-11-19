@@ -23,6 +23,7 @@ public partial class SettingsWindow : Window
     {
         InitializeComponent();
         MaxHeight = SystemParameters.WorkArea.Height - 40;
+        if ((Content as Border)?.Child is ScrollViewer pageScroll) SmoothWheel.Attach(pageScroll);
         SourceInitialized += (_, _) => Glass.Apply(this);
 
         int cur = S.RetentionDays;
@@ -176,10 +177,13 @@ public partial class SettingsWindow : Window
         InstallBtn.Content = "取消下载";
         ProgressTrack.Visibility = Visibility.Visible;
         ProgressFill.Width = 0;
-        var progress = new Progress<double>(p =>
+        BrowserBtn.Visibility = Visibility.Visible;
+        var progress = new Progress<DownloadProgress>(p =>
         {
-            ProgressFill.Width = Math.Max(0, ProgressTrack.ActualWidth * p);
-            UpdateStatus.Text = $"正在下载 {_update.Version.ToString(3)}… {p:P0}";
+            if (p.Note != null) { UpdateStatus.Text = p.Note; return; }
+            ProgressFill.Width = Math.Max(0, ProgressTrack.ActualWidth * p.Fraction);
+            var speed = p.BytesPerSecond >= 1048576 ? $"{p.BytesPerSecond / 1048576:0.0} MB/s" : $"{p.BytesPerSecond / 1024:0} KB/s";
+            UpdateStatus.Text = $"正在通过 {p.Source} 下载 {_update.Version.ToString(3)}… {p.Fraction:P0} · {speed}";
         });
         try
         {
@@ -195,7 +199,8 @@ public partial class SettingsWindow : Window
         catch (Exception ex)
         {
             App.Log("update download: " + ex);
-            UpdateStatus.Text = ex is InvalidDataException ? ex.Message : "下载失败：连接 GitHub 太慢或中断了。可以重试，或点“发布页”手动下载安装包。";
+            UpdateStatus.Text = ex is InvalidDataException ? ex.Message
+                : "下载失败：" + ex.Message + "。可以再点一次继续（会接着已下载的部分），或点“用浏览器下载”。";
         }
         finally
         {
@@ -207,6 +212,11 @@ public partial class SettingsWindow : Window
     }
 
     void Page_Click(object sender, RoutedEventArgs e) => Updater.OpenReleasesPage(_update?.PageUrl);
+
+    void Browser_Click(object sender, RoutedEventArgs e)
+    {
+        if (_update != null) Updater.OpenUrl(Updater.BrowserUrl(_update));
+    }
 
     // ───────────── data location ─────────────
 

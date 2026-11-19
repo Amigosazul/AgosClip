@@ -17,4 +17,8 @@ Win+V is captured with a low-level keyboard hook, and no registry or Explorer ch
 
 ## Online upgrade
 
-设置 → 更新 → 检查更新 reads the latest GitHub release of `Amigosazul/AgosClip`. The release must include `AgosClip-Setup-x.y.z.exe` and `AgosClip-Setup-x.y.z.exe.sha256`. After the download is verified, the installer runs with `/SILENT /RESTARTAPP`. It keeps the previous install folder and restarts the app.
+设置 → 更新 → 检查更新.
+- Version check: the GitHub API, falling back to `latest.json` in this repo served through jsDelivr when `api.github.com` is unreachable.
+- Download: GitHub direct plus GitHub mirror proxies (the `mirrors` list in `latest.json`, with built-in defaults). All of them are speed-probed first and the fastest is used. When a source stalls or crawls below 25 KB/s, the download switches source and resumes with HTTP Range.
+- Integrity: the SHA-256 comes from the GitHub API asset `digest` or from `latest.json`, never from a mirror. After verification the installer runs with `/SILENT /RESTARTAPP`.
+- `tools/release.sh` publishes the release, rewrites and pushes `latest.json`, and purges the jsDelivr cache. To replace a dead mirror without a release, edit `mirrors`, push, then purge `https://purge.jsdelivr.net/gh/Amigosazul/AgosClip@main/latest.json`.

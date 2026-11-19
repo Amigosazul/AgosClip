@@ -339,6 +339,24 @@ internal static class SelfTest
                 panel.Show();
                 Pump(200);
 
+                // touchpad: 10 tiny wheel events (Delta 8 each, like a precision touchpad) must scroll a little, not to the end
+                var isv = SmoothWheel.FindScrollViewer(panel.ItemList)!;
+                isv.ScrollToTop();
+                Pump(100);
+                for (int i = 0; i < 10; i++)
+                    panel.ItemList.RaiseEvent(new System.Windows.Input.MouseWheelEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0, -8)
+                        { RoutedEvent = UIElement.PreviewMouseWheelEvent });
+                Pump(100);
+                Check(isv.ScrollableHeight > 150 && isv.VerticalOffset > 10 && isv.VerticalOffset < 90,
+                    $"touchpad scroll moves proportionally ({isv.VerticalOffset:0}px of {isv.ScrollableHeight:0}px)");
+                isv.ScrollToTop();
+                Pump(100);
+                panel.ItemList.RaiseEvent(new System.Windows.Input.MouseWheelEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0, -120)
+                    { RoutedEvent = UIElement.PreviewMouseWheelEvent });
+                Pump(100);
+                Check(isv.VerticalOffset > 30 && isv.VerticalOffset < 90, $"one mouse-wheel notch scrolls about 3 lines ({isv.VerticalOffset:0}px)");
+                isv.ScrollToTop();
+
                 // remembered position
                 var st = App.Current.Settings;
                 st.PanelX = 120; st.PanelY = 90;
@@ -392,12 +410,14 @@ internal static class SelfTest
         var u = t.Result;
         Check(u != null, $"update check finds a newer release than {Updater.Current} ({u?.Version})");
         if (u == null) return;
+        Check(u.Sha256?.Length == 64, "update has a trusted SHA-256 (GitHub API digest / latest.json)");
+        string lastSource = "";
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var d = Updater.DownloadAsync(u, null);
+        var d = Updater.DownloadAsync(u, new Progress<DownloadProgress>(p => { if (p.Note == null) lastSource = p.Source; }));
         while (!d.IsCompleted) Pump(200);
         if (d.IsFaulted) { Check(false, "download: " + d.Exception!.InnerException!.Message); return; }
         Check(File.Exists(d.Result) && new FileInfo(d.Result).Length == u.Size,
-            $"installer downloaded and SHA-256 verified ({u.Size / 1048576.0:0.#} MB in {sw.Elapsed.TotalSeconds:0} s)");
+            $"installer downloaded via {lastSource} and SHA-256 verified ({u.Size / 1048576.0:0.#} MB in {sw.Elapsed.TotalSeconds:0} s)");
         File.Delete(d.Result);
     }
 

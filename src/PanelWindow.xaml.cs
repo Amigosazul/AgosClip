@@ -46,6 +46,10 @@ public partial class PanelWindow : Window
         _fgHook = Native.SetWinEventHook(Native.EVENT_SYSTEM_FOREGROUND, Native.EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, _fgProc, 0, 0, Native.WINEVENT_OUTOFCONTEXT);
         Closed += (_, _) => { if (_fgHook != IntPtr.Zero) Native.UnhookWinEvent(_fgHook); };
         PreviewKeyDown += OnKey;
+        SmoothWheel.Attach(ItemList);
+        SmoothWheel.HookHorizontal(this,
+            p => DayList.IsVisible && new Rect(DayList.TranslatePoint(new Point(), this), DayList.RenderSize).Contains(p),
+            delta => { if (CardScroller is { } sv) sv.ScrollToHorizontalOffset(sv.HorizontalOffset + delta * 0.6); });
         _searchDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         _searchDebounce.Tick += (_, _) => { _searchDebounce.Stop(); if (!Snapshot) LoadItems(0); };
         Store.Changed += () =>
