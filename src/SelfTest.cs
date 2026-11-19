@@ -77,6 +77,7 @@ internal static class SelfTest
             AnimationTests(outDir);
             Snapshots(outDir);
             if (!animationOnly && Environment.GetEnvironmentVariable("AGOSCLIP_UPDATE_TEST") == "1") UpdateTest();
+            if (Environment.GetEnvironmentVariable("AGOSCLIP_BENCH") == "1") OpenBenchmark(app);
         }
         catch (Exception ex)
         {
@@ -570,75 +571,60 @@ internal static class SelfTest
                 if (panel.IsVisible && firstVisibleHeight == 0) { var r = Rect(); firstVisibleHeight = r.Bottom - r.Top; }
             };
             panel.ShowFor(IntPtr.Zero);
-            Check(!SystemParameters.ClientAreaAnimation || firstVisibleHeight is > 0 and <= 2,
-                $"open is collapsed before the first visible frame ({firstVisibleHeight}px)");
             Pump(320);
             var full = Rect();
+            Check(!SystemParameters.ClientAreaAnimation || firstVisibleHeight == full.Bottom - full.Top,
+                $"the window has its final size from the first visible frame — no per-frame resize ({firstVisibleHeight}px)");
             Check(panel.IsVisible && !panel.IsClosing && full.Bottom - full.Top >= 580,
-                "open completes at full height");
+                "open completes at full size");
             var viewport = (FrameworkElement)panel.Content;
-            double viewportHeight = viewport.ActualHeight, rootHeight = panel.Root.ActualHeight;
 
-            // Deterministic checkpoints use the actual native rect and WPF layout, independent of frame rate.
+            // Deterministic checkpoints, independent of frame rate.
             foreach (bool down in new[] { true, false })
             {
                 expandDown.SetValue(panel, down);
-                // Select the edge explicitly to sample either direction.
-                panel.Root.VerticalAlignment = down ? VerticalAlignment.Top : VerticalAlignment.Bottom;
                 Seek(0.5);
                 Pump(40);
                 var half = Rect();
-                Check(Math.Abs((half.Bottom - half.Top) * 2 - (full.Bottom - full.Top)) <= 2 &&
-                    (down ? half.Top == full.Top : half.Bottom == full.Bottom),
-                    $"{(down ? "downward" : "upward")} reveal holds its anchor and halves the native height");
-                Check(Math.Abs(panel.Root.ActualHeight - rootHeight) < 1 &&
-                    viewport.ActualHeight < viewportHeight * 0.6,
-                    "content keeps full layout inside the shrinking viewport");
-                var offset = panel.Root.TranslatePoint(new Point(), viewport).Y;
-                Check(down ? Math.Abs(offset) < 1 : offset < -rootHeight * 0.35,
-                    "content is revealed from the correct edge without reflow");
+                int expectedShift = (int)Math.Round(panel.SlidePx * 0.5);
+                Check(half.Bottom - half.Top == full.Bottom - full.Top && half.Right - half.Left == full.Right - full.Left,
+                    $"{(down ? "downward" : "upward")} reveal keeps the window size");
+                Check(down ? full.Top - half.Top == expectedShift : half.Top - full.Top == expectedShift,
+                    $"{(down ? "downward" : "upward")} reveal slides out of the anchor edge ({half.Top - full.Top}px)");
                 RenderOnGlass(viewport, Path.Combine(outDir, down ? "reveal-down-half.png" : "reveal-up-half.png"), false, true);
                 Seek(1);
                 Pump(30);
             }
+            expandDown.SetValue(panel, true);
 
             if (SystemParameters.ClientAreaAnimation)
             {
                 panel.HidePanel();
-                Pump(55);
-                int closingHeight = Rect().Bottom - Rect().Top;
+                Pump(85); // ease-in close: give it a few pixels of travel before reversing
+                int closingShift = Math.Abs(Rect().Top - full.Top);
                 panel.ShowFor(IntPtr.Zero);
-                var reversed = Rect();
-                Check(panel.IsVisible && !panel.IsClosing && Math.Abs(reversed.Bottom - reversed.Top - closingHeight) <= 2,
-                    "reopening during close continues from the current height");
+                Check(panel.IsVisible && !panel.IsClosing && closingShift > 0 && Math.Abs(Math.Abs(Rect().Top - full.Top) - closingShift) <= 2,
+                    $"reopening during close continues from the current position ({closingShift}px)");
                 Pump(320);
-                Check(panel.IsVisible && !panel.IsClosing && Rect().Bottom - Rect().Top == full.Bottom - full.Top,
+                Check(panel.IsVisible && !panel.IsClosing && Rect().Top == full.Top,
                     "a replaced close cannot hide the reopened panel");
 
-                var beforeHide = new List<int> { Rect().Bottom - Rect().Top };
-                System.Windows.Interop.HwndSourceHook sample = (IntPtr h, int message, IntPtr w, IntPtr l, ref bool handled) =>
-                {
-                    if (message == 0x0047 && panel.IsVisible) // WM_WINDOWPOSCHANGED, independent of compositor frame cadence
-                    {
-                        var r = Rect();
-                        beforeHide.Add(r.Bottom - r.Top);
-                    }
-                    return IntPtr.Zero;
-                };
-                var source = System.Windows.Interop.HwndSource.FromHwnd(hwnd)!;
-                source.AddHook(sample);
+                var shifts = new List<int> { 0 };
+                EventHandler sample = (_, _) => { if (panel.IsVisible) shifts.Add(Math.Abs(Rect().Top - full.Top)); };
+                System.Windows.Media.CompositionTarget.Rendering += sample;
                 try { panel.HidePanel(); Pump(300); }
-                finally { source.RemoveHook(sample); }
-                Check(!panel.IsVisible && beforeHide.Count > 1 &&
-                    beforeHide.Zip(beforeHide.Skip(1), (a, b) => b <= a).All(x => x),
-                    $"close shrinks monotonically and hides without restoring full size ({string.Join(",", beforeHide)})");
+                finally { System.Windows.Media.CompositionTarget.Rendering -= sample; }
+                Check(!panel.IsVisible && shifts.Count > 1 && shifts.Zip(shifts.Skip(1), (x, y) => y >= x).All(x => x)
+                      && shifts.Max() <= panel.SlidePx,
+                    $"close slides monotonically back toward the anchor, then hides ({string.Join(",", shifts)})");
 
                 panel.ShowFor(IntPtr.Zero);
                 Pump(35);
                 panel.HidePanel(); // interrupt opening, then reverse again before it finishes closing
                 panel.ShowFor(IntPtr.Zero);
                 Pump(320);
-                Check(panel.IsVisible && !panel.IsClosing && Rect().Bottom - Rect().Top == full.Bottom - full.Top,
+                Check(panel.IsVisible && !panel.IsClosing && Rect().Top == full.Top &&
+                      Rect().Bottom - Rect().Top == full.Bottom - full.Top,
                     "rapid open-close-open settles fully open");
                 panel.Snapshot = true;
                 panel.HidePanel();
@@ -1011,6 +997,88 @@ internal static class SelfTest
                   && s.Search("在面板里改过的文字").Count == 1, "Ctrl+Enter saves the edit");
         }
         else Check(false, "editor test: no text item in the list");
+        panel.Close();
+    }
+
+    /// <summary>
+    /// Opt-in (AGOSCLIP_BENCH=1): fills the store with a heavy history and times Win+V opens —
+    /// data rebuild per open, and the worst gap between rendered frames while the panel animates.
+    /// </summary>
+    static void OpenBenchmark(App app)
+    {
+        var s = app.Store;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        for (int i = 0; i < 3000; i++)
+            s.Upsert(ClipKind.Text, Store.TextHash("bench " + i), $"bench item {i} " + new string('文', i % 200), null, null, 0, 0, "Bench",
+                At(i % 30, 8 + i % 12, i % 60));
+        _mon ??= new ClipboardMonitor(s, () => app.Settings);
+        for (int i = 0; i < 40; i++)
+        {
+            var (h, r, t) = _mon.SaveImage(MakeImage(1600, 900, "bench " + i, Colors.SlateBlue, Colors.Teal));
+            s.Upsert(ClipKind.Image, h, null, r, t, 1600, 900, "Bench", At(0, 7, i));
+        }
+        Report.AppendLine($"BENCH seeded 3040 items in {sw.ElapsedMilliseconds} ms");
+
+        var panel = new PanelWindow();
+
+        // Per-frame cost of the two animation techniques on the same window: resizing the HWND (old) vs
+        // moving it (new). Each step waits until WPF has finished layout + render for that frame.
+        panel.ShowFor(IntPtr.Zero);
+        Pump(400);
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(panel).Handle;
+        Native.GetWindowRect(hwnd, out var rr);
+        int pw = rr.Right - rr.Left, ph = rr.Bottom - rr.Top;
+        double Cost(Func<int, (int y, int hh)> step, uint flags)
+        {
+            var t = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 1; i <= 30; i++)
+            {
+                var (y, hh) = step(i);
+                Native.SetWindowPos(hwnd, IntPtr.Zero, rr.Left, y, pw, hh, 0x0004 | 0x0010 | flags);
+                Application.Current.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle); // after layout + render
+            }
+            Native.SetWindowPos(hwnd, IntPtr.Zero, rr.Left, rr.Top, pw, ph, 0x0004 | 0x0010);
+            Application.Current.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            return t.Elapsed.TotalMilliseconds / 30;
+        }
+        double resize = Cost(i => (rr.Top, Math.Max(1, ph * i / 30)), 0);
+        double move = Cost(i => (rr.Top - 10 + i / 3, ph), 0x0001 /* NOSIZE */);
+        Report.AppendLine($"BENCH per-frame UI cost: resize-window (old) {resize:0.0} ms/frame, move-window (new) {move:0.0} ms/frame");
+        Check(move < resize, "moving the window per frame costs less than resizing it");
+        panel.HidePanel();
+        Pump(300);
+
+        var gaps = new List<double>();
+        var frame = System.Diagnostics.Stopwatch.StartNew();
+        double last = 0;
+        EventHandler onFrame = (_, _) => { double now = frame.Elapsed.TotalMilliseconds; if (last > 0) gaps.Add(now - last); last = now; };
+        for (int round = 0; round < 6; round++)
+        {
+            System.Windows.Media.CompositionTarget.Rendering += onFrame;
+            gaps.Clear(); last = 0;
+            panel.ShowFor(IntPtr.Zero);
+            Pump(450);
+            System.Windows.Media.CompositionTarget.Rendering -= onFrame;
+            var (a, d, total) = panel.LastOpenTiming;
+            if (round == 3) s.Upsert(ClipKind.Text, Store.TextHash("bench change"), "bench change", null, null, 0, 0, null); // forces one rebuild
+            Report.AppendLine($"BENCH open {round}{(panel.LastOpenReusedList ? " (reused)" : "")}: anchor {a:0.0} ms, data {d:0.0} ms, shown at {total:0.0} ms; " +
+                              $"frames {gaps.Count}, worst frame gap {(gaps.Count > 0 ? gaps.Max() : 0):0.0} ms, avg {(gaps.Count > 0 ? gaps.Average() : 0):0.0} ms");
+            panel.HidePanel();
+            Pump(400);
+        }
+        panel.ShowFor(IntPtr.Zero);
+        Pump(300);
+        s.Upsert(ClipKind.Text, Store.TextHash("copied while hidden?"), "copied while hidden?", null, null, 0, 0, null);
+        panel.HidePanel(); Pump(300);
+        s.Upsert(ClipKind.Text, Store.TextHash("copied while hidden"), "copied while hidden", null, null, 0, 0, null);
+        panel.ShowFor(IntPtr.Zero);
+        Pump(300);
+        Check(!panel.LastOpenReusedList && panel.ItemList.Items.OfType<ItemVm>().First().Item.Text == "copied while hidden",
+            "something copied while the panel was closed shows on the next open");
+        panel.HidePanel(); Pump(300);
+        panel.ShowFor(IntPtr.Zero);
+        Pump(300);
+        Check(panel.LastOpenReusedList, "an unchanged history reuses the built list");
         panel.Close();
     }
 }

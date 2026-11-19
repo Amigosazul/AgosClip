@@ -20,7 +20,8 @@ internal readonly record struct PanelAnchor(Native.POINT Cursor, Native.RECT? Fi
 internal static class PanelPlacement
 {
     const uint NearestMonitor = 2;
-    // UI Automation calls cross process boundaries and may outlive the time budget. Allow only
+    // UI Automation calls cross process boundaries and may outlive the time budget (80 ms, run in
+    // parallel with the list rebuild; past it the panel opens by the caret/mouse instead of waiting). Allow only
     // one outstanding query, so an unresponsive accessibility provider cannot pile up workers.
     static int _queryInFlight;
 
@@ -56,7 +57,7 @@ internal static class PanelPlacement
         });
         try
         {
-            var (field, nonEditable) = await query.WaitAsync(TimeSpan.FromMilliseconds(160));
+            var (field, nonEditable) = await query.WaitAsync(TimeSpan.FromMilliseconds(80));
             return anchor with { Field = field, Caret = nonEditable ? null : caret };
         }
         catch (TimeoutException) { return anchor with { Caret = caret }; }

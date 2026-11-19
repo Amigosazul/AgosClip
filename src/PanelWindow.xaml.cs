@@ -61,6 +61,7 @@ public partial class PanelWindow : Window
         _searchDebounce.Tick += (_, _) => { _searchDebounce.Stop(); if (!Snapshot) LoadItems(0); };
         Store.Changed += () =>
         {
+            _dataDirty = true;
             if (_muteStoreChange || !IsVisible || _reloadQueued) return;
             _reloadQueued = true;
             Dispatcher.BeginInvoke(() => { _reloadQueued = false; Reload(keepIndex: true); }, DispatcherPriority.Background);
@@ -136,17 +137,39 @@ public partial class PanelWindow : Window
         if (IsOpening) return;
         IsOpening = true;
         int request = ++_showRequest;
-        var anchor = await PanelPlacement.CaptureAsync(target);
+        var t0 = System.Diagnostics.Stopwatch.StartNew();
+        // The focused-field lookup (UI Automation in another process) runs in the background while the
+        // list is prepared here, instead of the panel waiting for it before doing anything.
+        var anchorTask = PanelPlacement.CaptureAsync(target);
+        Glass.Apply(this);
+        PausedBadge.Visibility = App.Paused ? Visibility.Visible : Visibility.Collapsed;
+        bool wasSearching = SearchBox.Text.Length > 0;
+        SetSearchOpen(false, animate: false, focus: false);
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        bool reusable = !_dataDirty && !wasSearching && _builtFor == today && _items.Count > 0
+                        && CurrentCard is { IsPinned: false } cc && cc.Date == today;
+        if (reusable)
+        {
+            // nothing changed since the panel last closed: keep the built list, just reset to the top
+            ItemList.SelectedIndex = 0;
+            ItemList.ScrollIntoView(ItemList.SelectedItem);
+            ApplyDateLayout();
+        }
+        else
+        {
+            RebuildCards(null);
+            LoadItems(0);
+            _dataDirty = false;
+            _builtFor = today;
+        }
+        LastOpenReusedList = reusable;
+        double tData = t0.Elapsed.TotalMilliseconds;
+        var anchor = await anchorTask;
+        double tAnchor = t0.Elapsed.TotalMilliseconds;
         if (request != _showRequest) return;
         IsOpening = false;
         if (target != IntPtr.Zero && Native.GetForegroundWindow() != target) return;
         _target = target;
-        Glass.Apply(this);
-        PausedBadge.Visibility = App.Paused ? Visibility.Visible : Visibility.Collapsed;
-
-        SetSearchOpen(false, animate: false, focus: false);
-        RebuildCards(null);
-        LoadItems(0);
 
         CalOverlay.Visibility = Visibility.Collapsed;
         PlaceNear(anchor);
@@ -157,7 +180,16 @@ public partial class PanelWindow : Window
         Native.ForceForeground(_hwnd);
         FocusPanelInput();
         ScrollCardsToStart();
+        LastOpenTiming = (tAnchor, tData, t0.Elapsed.TotalMilliseconds);
+        App.Log($"open timing: data ready {tData:0}ms{(LastOpenReusedList ? " (list reused)" : "")}, anchor ready {tAnchor:0}ms, shown at {t0.Elapsed.TotalMilliseconds:0}ms");
     }
+
+    bool _dataDirty = true;   // the store changed since the list was last built
+    DateOnly _builtFor;       // the day "today" was when the list was built (midnight rolls it over)
+    internal bool LastOpenReusedList;
+
+    /// <summary>(anchor ready, data ready, shown) in ms since Win+V for the last open — for the log and benchmark.</summary>
+    internal (double Anchor, double Data, double Total) LastOpenTiming;
 
     // ───────────── open / close animation ─────────────
 
@@ -180,7 +212,7 @@ public partial class PanelWindow : Window
         double from = Math.Clamp(AnimProgress, 0, 1);
         // Short reversals cover only the remaining distance instead of restarting a full-length animation.
         var animation = new DoubleAnimation(from, to,
-            TimeSpan.FromMilliseconds((to == 1 ? 200 : 160) * Math.Abs(to - from)))
+            TimeSpan.FromMilliseconds((to == 1 ? 170 : 120) * Math.Abs(to - from)))
         {
             EasingFunction = new CubicEase { EasingMode = to == 1 ? EasingMode.EaseOut : EasingMode.EaseIn }
         };
@@ -219,14 +251,27 @@ public partial class PanelWindow : Window
         new PropertyMetadata(1.0, (d, _) => ((PanelWindow)d).ApplyAnimRect()));
     double AnimProgress => (double)GetValue(AnimProgressProperty);
 
-    /// <summary>Sizes/positions the native window between the anchor edge and the full rect for the current progress.</summary>
+    /// <summary>
+    /// Animation frame: the window keeps its full size and only slides a few pixels out of the anchor edge. Resizing the HWND every frame (the previous approach) made WPF re-layout
+    /// and rebuild its render surface per frame, which dropped frames — moving a window is nearly free, and
+    /// the glass backdrop still travels with it.
+    /// </summary>
     void ApplyAnimRect()
     {
         if (_fh <= 0 || _hwnd == IntPtr.Zero) return;
-        int h = Math.Max(1, (int)Math.Round(_fh * Math.Clamp(AnimProgress, 0.0, 1.0)));
-        int y = _expandDown ? _fy : _fy + _fh - h;
-        Native.SetWindowPos(_hwnd, IntPtr.Zero, _fx, y, _fw, h, 0x0004 | 0x0010); // NOZORDER | NOACTIVATE
+        double p = Math.Clamp(AnimProgress, 0.0, 1.0);
+        int slide = (int)Math.Round(_slidePx * (1 - p));
+        int y = _expandDown ? _fy - slide : _fy + slide; // emerge away from the caret/field
+        bool resize = _appliedW != _fw || _appliedH != _fh;
+        Native.SetWindowPos(_hwnd, IntPtr.Zero, _fx, y, _fw, _fh, 0x0004 | 0x0010 | (resize ? 0u : 0x0001u)); // NOZORDER|NOACTIVATE[|NOSIZE]
+        (_appliedW, _appliedH) = (_fw, _fh);
+        // No content fade: Opacity on the whole panel forces WPF to re-render all of it every frame.
+        // A pure move costs WPF nothing (DWM shifts the already-composed surface).
     }
+
+    int _appliedW, _appliedH;
+    int _slidePx = 10;
+    internal int SlidePx => _slidePx;
 
     // ───────────── search ─────────────
 
@@ -374,6 +419,7 @@ public partial class PanelWindow : Window
     void SetPlacement(int x, int y, int w, int h)
     {
         (_fx, _fy, _fw, _fh) = (x, y, w, h);
+        _slidePx = Math.Max(4, (int)Math.Round(10.0 * w / Math.Max(1, _wDip))); // 10 DIP at the monitor's scale
         Root.VerticalAlignment = _expandDown ? VerticalAlignment.Top : VerticalAlignment.Bottom;
         ApplyAnimRect();
         Native.SetWindowPos(_hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); // NOSIZE | NOMOVE | NOACTIVATE, topmost
