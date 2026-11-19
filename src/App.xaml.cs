@@ -68,6 +68,8 @@ public partial class App : Application
         bool dataFolderMissing = !Settings.ApplyDataLocation();
         if (dataFolderMissing) Log($"data folder missing: {Settings.DataLocation}; using {Settings.DataDir} for now");
         Settings.RememberDataDir();
+        LogLimitBytes = Math.Max(1, Settings.LogMaxMB) * (1L << 20);
+        if (!Settings.IsDefaultLocation(Settings.DataDir)) MoveLogs(Settings.ConfigDir); // logs used to live in %APPDATA%
         Log($"start v{Updater.Current.ToString(3)} on Windows {Environment.OSVersion.Version} from {AppContext.BaseDirectory}" +
             (background ? " (autostart)" : "") + (dataFolderMissing ? " [data folder missing]" : ""));
         bool firstRun = !Settings.FirstRunDone;
@@ -246,6 +248,7 @@ public partial class App : Application
     public void ApplySettings()
     {
         Settings.Save();
+        LogLimitBytes = Math.Max(1, Settings.LogMaxMB) * (1L << 20);
         Theme.Apply();
         if (Settings.TakeOverWinV) _hook?.Enable(); else _hook?.Disable();
         try { Settings.ApplyAutoStart(Settings.StartWithWindows); } catch (Exception ex) { Log("autostart: " + ex.Message); }
@@ -279,21 +282,76 @@ public partial class App : Application
     }
 
     static readonly object LogLock = new();
+    /// <summary>agosclip.log + agosclip.old.log together stay under this (Settings.LogMaxMB).</summary>
+    public static long LogLimitBytes = 5L << 20;
+
+    /// <summary>Logs live in the data folder, next to the history (they move with it).</summary>
     public static void Log(string msg)
     {
         try
         {
             lock (LogLock)
             {
-                Directory.CreateDirectory(Settings.ConfigDir);
-                var path = Path.Combine(Settings.ConfigDir, "agosclip.log");
-                // rotate: keep one previous file so feedback still has recent history
-                if (File.Exists(path) && new FileInfo(path).Length > 1_000_000)
-                    File.Move(path, Path.Combine(Settings.ConfigDir, "agosclip.old.log"), true);
+                Directory.CreateDirectory(Settings.DataDir);
+                var path = Feedback.LogFile;
+                // rotate at half the limit, keeping one previous file → both together ≤ limit
+                if (File.Exists(path) && new FileInfo(path).Length > LogLimitBytes / 2)
+                    File.Move(path, Feedback.OldLogFile, true);
                 File.AppendAllText(path, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {msg}{Environment.NewLine}");
             }
         }
         catch { }
         Debug.WriteLine(msg);
+    }
+
+    /// <summary>Applies a (possibly smaller) limit right away: keeps only the newest part of each file.</summary>
+    public static void TrimLogs()
+    {
+        lock (LogLock)
+        {
+            foreach (var f in new[] { Feedback.LogFile, Feedback.OldLogFile })
+                try { KeepTail(f, LogLimitBytes / 2); } catch { }
+        }
+    }
+
+    static void KeepTail(string path, long max)
+    {
+        if (!File.Exists(path) || new FileInfo(path).Length <= max) return;
+        byte[] tail;
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            fs.Seek(-max, SeekOrigin.End);
+            tail = new byte[max];
+            fs.ReadExactly(tail);
+        }
+        int nl = Array.IndexOf(tail, (byte)'\n');          // start on a whole line
+        File.WriteAllBytes(path, nl >= 0 && nl + 1 < tail.Length ? tail[(nl + 1)..] : tail);
+    }
+
+    /// <summary>Moves log files from one folder into the current data folder (startup migration, data moves).</summary>
+    public static void MoveLogs(string fromDir)
+    {
+        lock (LogLock)
+        {
+            foreach (var name in new[] { "agosclip.old.log", "agosclip.log" })
+            {
+                var src = Path.Combine(fromDir, name);
+                var dst = Path.Combine(Settings.DataDir, name);
+                if (!File.Exists(src) || string.Equals(Path.GetFullPath(src), Path.GetFullPath(dst), StringComparison.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    if (!File.Exists(dst)) File.Move(src, dst);
+                    else
+                    {
+                        // keep chronological order: older lines first
+                        var merged = File.ReadAllText(src) + File.ReadAllText(dst);
+                        File.WriteAllText(dst, merged);
+                        File.Delete(src);
+                    }
+                }
+                catch { }
+            }
+        }
+        TrimLogs();
     }
 }

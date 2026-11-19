@@ -107,6 +107,7 @@ public static class DataMover
         store.Open();
         App.Moving = false;
         store.NotifyChanged();
+        App.MoveLogs(oldDir); // logs follow the data (moved after the switch so no line is lost)
 
         if (!useExisting)
         {
@@ -162,6 +163,7 @@ public static class DataMover
         try { var img = Path.Combine(dir, "images"); if (Directory.Exists(img)) Directory.Delete(img, true); } catch { }
         try
         {
+            foreach (var log in new[] { "agosclip.log", "agosclip.old.log" }) try { File.Delete(Path.Combine(dir, log)); } catch { }
             if (!Settings.IsDefaultLocation(dir) && Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
                 Directory.Delete(dir);
         }

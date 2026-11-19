@@ -125,6 +125,8 @@ begin
   DeleteFile(AddBackslash(Dir) + 'history.db-wal');
   DeleteFile(AddBackslash(Dir) + 'history.db-shm');
   DelTree(AddBackslash(Dir) + 'images', True, True, True);
+  DeleteFile(AddBackslash(Dir) + 'agosclip.log');
+  DeleteFile(AddBackslash(Dir) + 'agosclip.old.log');
   RemoveDir(Dir);
 end;
 

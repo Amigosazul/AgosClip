@@ -22,8 +22,8 @@ public partial class SettingsWindow : Window
     public SettingsWindow()
     {
         InitializeComponent();
-        MaxHeight = SystemParameters.WorkArea.Height - 40;
-        if ((Content as Border)?.Child is ScrollViewer pageScroll) SmoothWheel.Attach(pageScroll);
+        Height = Math.Min(Height, SystemParameters.WorkArea.Height - 40);
+        SmoothWheel.Attach(PageScroll);
         SourceInitialized += (_, _) => Glass.Apply(this);
 
         int cur = S.RetentionDays;
@@ -43,16 +43,25 @@ public partial class SettingsWindow : Window
         }
         _lastRetention = cur;
 
+        foreach (var mb in new[] { 1, 5, 10, 50 }.Union(new[] { S.LogMaxMB }).OrderBy(x => x))
+        {
+            var chip = new RadioButton { Style = (Style)Resources["Chip"], GroupName = "logsize", Content = $"{mb} MB", Tag = mb, IsChecked = mb == S.LogMaxMB };
+            chip.Checked += LogSize_Changed;
+            LogSize.Children.Add(chip);
+        }
+
         RecordImages.IsChecked = S.RecordImages;
         GlassBox.IsChecked = S.Glass;
         GlassBox.IsEnabled = Glass.Supported;
-        if (!Glass.Supported) GlassBox.Tag = "这台电脑的 Windows 版本不支持（需要 Windows 11 22H2 以上）。";
+        if (!Glass.Supported) GlassBox.Tag = "这台电脑的 Windows 版本不支持（需要 Windows 11 22H2+）";
         TakeOverWinV.IsChecked = S.TakeOverWinV;
         PasteAfterSelect.IsChecked = S.PasteAfterSelect;
         StartWithWindows.IsChecked = S.StartWithWindows;
         ShowLocation();
         var v = Assembly.GetExecutingAssembly().GetName().Version;
-        Version.Text = $"AgosClip {v?.ToString(3)} · 剪贴板数据只保存在本机，只有检查更新时会联网";
+        Version.Text = $"版本 {v?.ToString(3)}";
+        AboutVersion.Text = $"AgosClip {v?.ToString(3)}";
+        Nav.SelectedIndex = 0;
         AutoUpdate.IsChecked = S.AutoCheckUpdates;
         ShowUpdate(App.Current.LatestUpdate);
         UpdateStats();
@@ -70,7 +79,11 @@ public partial class SettingsWindow : Window
                 bytes = new DirectoryInfo(Store.ImagesDir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length);
         }
         catch { }
-        Stats.Text = $"共 {total} 条记录，分布在 {counts.Count} 天；图片占用 {bytes / 1048576.0:0.#} MB";
+        Stats.Text = $"共 {total} 条，分布在 {counts.Count} 天";
+        long logBytes = new[] { Feedback.LogFile, Feedback.OldLogFile }.Where(File.Exists).Sum(f => new FileInfo(f).Length);
+        long dbBytes = File.Exists(Store.DbFile) ? new FileInfo(Store.DbFile).Length : 0;
+        StorageStats.Text = $"记录 {total} 条 · 数据库 {dbBytes / 1048576.0:0.#} MB · 图片 {bytes / 1048576.0:0.#} MB · 日志 {logBytes / 1048576.0:0.##} MB";
+        LogStats.Text = $"当前占用 {logBytes / 1048576.0:0.##} MB；超出后自动删掉最旧的部分。日志不含复制的内容";
     }
 
     void Changed(object sender, RoutedEventArgs e)
@@ -146,7 +159,31 @@ public partial class SettingsWindow : Window
     }
 
     /// <summary>Called by the app (tray "检查更新…") to start a check as soon as the window is open.</summary>
-    public void StartCheck() => Check_Click(this, new RoutedEventArgs());
+    public void StartCheck()
+    {
+        Nav.SelectedIndex = 3;
+        Check_Click(this, new RoutedEventArgs());
+    }
+
+    internal void ShowPage(int i) => Nav.SelectedIndex = i;
+
+    void Nav_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var pages = new FrameworkElement[] { PageGeneral, PageHistory, PageStorage, PageUpdate, PageAbout };
+        for (int i = 0; i < pages.Length; i++)
+            pages[i].Visibility = i == Nav.SelectedIndex ? Visibility.Visible : Visibility.Collapsed;
+        PageScroll.ScrollToTop();
+        if (Nav.SelectedIndex == 2 && !_loading) UpdateStats();
+    }
+
+    void LogSize_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || sender is not RadioButton { Tag: int mb }) return;
+        S.LogMaxMB = mb;
+        App.Current.ApplySettings();
+        App.TrimLogs();
+        UpdateStats();
+    }
 
     async void Check_Click(object sender, RoutedEventArgs e)
     {

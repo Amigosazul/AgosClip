@@ -17,8 +17,8 @@ namespace AgosClip;
 /// </summary>
 public static class Feedback
 {
-    public static string LogFile => Path.Combine(Settings.ConfigDir, "agosclip.log");
-    public static string OldLogFile => Path.Combine(Settings.ConfigDir, "agosclip.old.log");
+    public static string LogFile => Path.Combine(Settings.DataDir, "agosclip.log");
+    public static string OldLogFile => Path.Combine(Settings.DataDir, "agosclip.old.log");
 
     public static void OpenLog()
     {

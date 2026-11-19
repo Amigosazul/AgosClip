@@ -193,7 +193,7 @@ internal static class SelfTest
         Clipboard.SetDataObject(shot2, true);
         Pump(2500);
         Check(s.ItemsOnDay(Today).Count(i => i.Kind == ClipKind.Image) == before + 2, "image next to an empty text format is captured");
-        var log = Path.Combine(Settings.ConfigDir, "agosclip.log");
+        var log = Feedback.LogFile;
         Check(File.Exists(log) && File.ReadAllText(log).Contains("→ image 500x300"), "capture decisions are logged");
 
         app.Settings.RecordImages = false;
@@ -390,12 +390,17 @@ internal static class SelfTest
             if (glass)
             {
                 var sw = new SettingsWindow { Left = -32000, Top = -32000, WindowStartupLocation = WindowStartupLocation.Manual };
-                sw.MaxHeight = double.PositiveInfinity; // screenshot the whole page, not just the scrolled part
                 sw.Show();
                 Pump(400);
                 Check(sw.Content is FrameworkElement, "settings window builds");
-                if ((sw.Content as System.Windows.Controls.Border)?.Child is System.Windows.Controls.ScrollViewer { Content: FrameworkElement sroot })
-                    RenderOnGlass(sroot, Path.Combine(outDir, $"settings-{tag}.png"), dark, glass);
+                string[] names = { "general", "history", "storage", "update", "about" };
+                for (int pi = 0; pi < names.Length; pi++)
+                {
+                    if (dark && pi > 0) break; // dark: just the first page
+                    sw.ShowPage(pi);
+                    Pump(250);
+                    RenderOnGlass((FrameworkElement)sw.Content, Path.Combine(outDir, $"settings-{names[pi]}-{tag}.png"), dark, glass);
+                }
                 sw.Close();
             }
         }
@@ -447,6 +452,9 @@ internal static class SelfTest
         Check(images.Count > 0 && images.All(i => File.Exists(Path.Combine(target, i.ImagePath!))), "image files moved along");
         Check(File.Exists(Path.Combine(Settings.ConfigDir, "settings.json")) &&
               File.ReadAllText(Path.Combine(Settings.ConfigDir, "settings.json")).Contains("-picked"), "settings stay in the config folder and remember the location");
+        App.Log("log line after move");
+        Check(File.Exists(Path.Combine(target, "agosclip.log")) && !File.Exists(Path.Combine(Settings.ConfigDir, "agosclip.log"))
+              && File.ReadAllText(Path.Combine(target, "agosclip.log")).Contains("data moved"), "log moved along with the data");
         s.Upsert(ClipKind.Text, Store.TextHash("written after move"), "written after move", null, null, 0, 0, null);
         Check(s.Search("written after move").Count == 1, "new items are written in the new folder");
 
@@ -462,8 +470,23 @@ internal static class SelfTest
         Directory.Delete(picked, true);
     }
 
+    static void LogLimitTest()
+    {
+        var saved = App.LogLimitBytes;
+        App.LogLimitBytes = 8 * 1024;
+        for (int i = 0; i < 400; i++) App.Log($"filler line {i} " + new string('x', 40));
+        long size() => new[] { Feedback.LogFile, Feedback.OldLogFile }.Where(File.Exists).Sum(f => new FileInfo(f).Length);
+        Check(size() <= 8 * 1024 + 200, $"log size stays under the limit ({size()} bytes for 8 KB)");
+        Check(File.ReadAllText(Feedback.LogFile).Contains("filler line 399"), "newest log lines are kept");
+        App.LogLimitBytes = 2 * 1024;
+        App.TrimLogs();
+        Check(size() <= 2 * 1024 + 200, $"lowering the limit trims right away ({size()} bytes for 2 KB)");
+        App.LogLimitBytes = saved;
+    }
+
     static void FeedbackTests(App app)
     {
+        LogLimitTest();
         var secretText = "SECRET-CLIP-" + Guid.NewGuid().ToString("N")[..6];
         app.Store.Upsert(ClipKind.Text, Store.TextHash(secretText), secretText, null, null, 0, 0, "记事本");
         var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);

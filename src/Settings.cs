@@ -21,6 +21,8 @@ public sealed class Settings
     public string? NotifiedVersion { get; set; }
     /// <summary>Where the user dragged the panel (physical px, top-left). Null = open near the caret/cursor.</summary>
     public int? PanelX { get; set; }
+    /// <summary>Upper bound for agosclip.log + agosclip.old.log together.</summary>
+    public int LogMaxMB { get; set; } = 5;
     public int? PanelY { get; set; }
 
     /// <summary>Custom folder for history.db + images; null = the default (ConfigDir).</summary>
