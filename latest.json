@@ -1,9 +1,9 @@
 {
-  "version": "1.6.1",
-  "file": "AgosClip-Setup-1.6.1.exe",
-  "sha256": "5e6d6d9c6c70d52f82c38a9a26474d63b675ddaae433603a86c16f4ec7f5bf59",
-  "size": 52755659,
-  "notes": "## AgosClip 1.6.1\n\n**在线更新再提速**\n- 安装包分成 1 MB 的小块，同时从多条线路下载，速度能叠加起来。实测国内不开代理：50 MB 从 6 分钟缩短到 46 秒。\n- 某一块下载失败或太慢，会交给别的线路重下；一直出错的线路会被自动停用。下载中断后再点一次，已经下完的块不用重下。\n- 其他改动同 1.6.0：多线路测速、校验值只从官方取，以及修复触摸板一划就滚到底。\n\n**国内手动下载**（1.5.0 及更早的版本只能从 GitHub 直连下载更新，下不动的话请手动装一次这个版本，之后就能在程序里正常升级了）：\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.6.1/AgosClip-Setup-1.6.1.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.6.1/AgosClip-Setup-1.6.1.exe",
+  "version": "1.7.0",
+  "file": "AgosClip-Setup-1.7.0.exe",
+  "sha256": "77734d45624c0bbbb5e1bb18080a81da5144af0bf7d5ee881160b5faed1e8d18",
+  "size": 52739886,
+  "notes": "## AgosClip 1.7.0\n\n**设置界面重新整理**\n- 改成左边一列导航、右边分页显示，不再是一整页长长地往下滚：\n  - 通用：Win+V、自动粘贴、开机启动、毛玻璃\n  - 记录：保留天数、记录图片、清空历史\n  - 存储与日志\n  - 更新\n  - 关于与反馈\n- 每一页的选项分组显示，说明文字也精简了。\n\n**日志放进数据位置，可以设大小上限**\n- 日志和历史记录、图片放在一起。如果你把数据位置改到了别的盘，旧日志会自动搬过去，以后改位置时日志也会一起搬。C 盘只留一个几 KB 的设置文件。\n- 新增“日志大小上限”：1 / 5 / 10 / 50 MB，默认 5 MB。超出后会自动删掉最旧的部分；把上限调小会立刻生效。\n- 卸载时选择删除记录，日志也会一起删除。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.7.0/AgosClip-Setup-1.7.0.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.7.0/AgosClip-Setup-1.7.0.exe",
   "mirrors": [
     "https://ghfast.top/",
     "https://gh-proxy.com/",
