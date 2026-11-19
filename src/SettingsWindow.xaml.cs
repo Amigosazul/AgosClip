@@ -51,6 +51,7 @@ public partial class SettingsWindow : Window
         }
 
         RecordImages.IsChecked = S.RecordImages;
+        ShowDateCards.IsChecked = S.ShowDateCards;
         GlassBox.IsChecked = S.Glass;
         GlassBox.IsEnabled = Glass.Supported;
         if (!Glass.Supported) GlassBox.Tag = "这台电脑的 Windows 版本不支持（需要 Windows 11 22H2+）";
@@ -90,6 +91,7 @@ public partial class SettingsWindow : Window
     {
         if (_loading) return;
         S.RecordImages = RecordImages.IsChecked == true;
+        S.ShowDateCards = ShowDateCards.IsChecked == true;
         S.TakeOverWinV = TakeOverWinV.IsChecked == true;
         S.PasteAfterSelect = PasteAfterSelect.IsChecked == true;
         S.StartWithWindows = StartWithWindows.IsChecked == true;

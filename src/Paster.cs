@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
@@ -10,14 +11,44 @@ namespace AgosClip;
 
 public static class Paster
 {
-    /// <summary>Puts an item on the clipboard. Returns false if the item's data is gone or the clipboard stayed locked.</summary>
-    public static bool SetClipboard(ClipItem item)
+    /// <summary>
+    /// Puts an item on the clipboard. Returns false if the item's data is gone or the clipboard stayed locked.
+    /// <paramref name="formats"/> are the extra formats stored with a text item (HTML/RTF/spreadsheet).
+    /// </summary>
+    public static bool SetClipboard(ClipItem item, System.Collections.Generic.IReadOnlyList<ClipFormat>? formats = null)
+        => SetClipboard(item, formats, out _);
+
+    public static bool SetClipboard(ClipItem item, System.Collections.Generic.IReadOnlyList<ClipFormat>? formats, out string? problem)
     {
+        problem = null;
         var data = new DataObject();
         if (item.Kind == ClipKind.Text)
         {
             if (item.Text == null) return false;
             data.SetText(item.Text, TextDataFormat.UnicodeText);
+            // rich formats first-class next to plain text: the target app picks the best one it understands
+            foreach (var f in formats ?? Array.Empty<ClipFormat>())
+            {
+                try
+                {
+                    if (f.IsText) data.SetData(f.Name, System.Text.Encoding.UTF8.GetString(f.Data));
+                    else data.SetData(f.Name, new MemoryStream(f.Data));
+                }
+                catch (Exception ex) { App.Log($"paste: format {f.Name} skipped: {ex.GetType().Name}"); }
+            }
+        }
+        else if (item.Kind == ClipKind.Files)
+        {
+            var existing = item.Paths.Where(p => File.Exists(p) || Directory.Exists(p)).ToArray();
+            if (existing.Length == 0) { problem = "这些文件都已经不在原来的位置了"; return false; }
+            var list = new System.Collections.Specialized.StringCollection();
+            list.AddRange(existing);
+            data.SetFileDropList(list);
+            // always "copy": pasting from history must never move the user's original files
+            data.SetData("Preferred DropEffect", new MemoryStream(BitConverter.GetBytes(1 /* DROPEFFECT_COPY */)));
+            data.SetText(string.Join(Environment.NewLine, existing), TextDataFormat.UnicodeText); // for text editors
+            if (existing.Length < item.Paths.Length)
+                problem = $"有 {item.Paths.Length - existing.Length} 个文件已经不在原来的位置，只粘贴了 {existing.Length} 个";
         }
         else
         {

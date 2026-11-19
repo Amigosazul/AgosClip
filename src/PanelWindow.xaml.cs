@@ -42,7 +42,7 @@ public partial class PanelWindow : Window
         // Our reveal already animates the real glass window; avoid a second DWM show/hide transition.
         int disableTransitions = 1;
         Native.DwmSetWindowAttribute(_hwnd, 3, ref disableTransitions, 4); // DWMWA_TRANSITIONS_FORCEDISABLED
-        Deactivated += (_, _) => { if (!_pasting && !Snapshot && !_sticky) HidePanel(); };
+        Deactivated += (_, _) => { if (!_pasting && !Snapshot && !_sticky && !EditOpen) HidePanel(); };
         // Remember the last window the user worked in, so a pinned panel knows where to paste.
         _fgProc = (_, _, hwnd, _, _, _, _) =>
         {
@@ -350,6 +350,7 @@ public partial class PanelWindow : Window
         IsOpening = false;
         if (_sticky) SetSticky(false);
         CalOpen = false;
+        if (EditOpen) { _editing = null; EditOverlay.Visibility = Visibility.Collapsed; }
         if (!IsVisible) { SetSearchOpen(false, animate: false, focus: false); return; }
         if (_closing) return;
         if (!AnimatePanel)
@@ -391,6 +392,31 @@ public partial class PanelWindow : Window
     }
 
     /// <summary>Rebuilds the date cards; keeps the given card selected if it still exists, else selects today.</summary>
+    /// <summary>Issue #5: without the date-card strip, the list title carries ‹ › and the calendar.</summary>
+    bool Compact => !App.Current.Settings.ShowDateCards;
+
+    void ApplyDateLayout()
+    {
+        bool compact = Compact, searching = SearchBox.Text.Trim().Length > 0;
+        DateStrip.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        var v = compact && !searching ? Visibility.Visible : Visibility.Collapsed;
+        DayOlder.Visibility = DayNewer.Visibility = CompactCalButton.Visibility = v;
+        SectionRow.Margin = compact ? new Thickness(0, 8, -4, 6) : new Thickness(0, 12, -4, 7);
+        int i = DayList.SelectedIndex;
+        DayOlder.IsEnabled = i >= 0 && i < _cards.Count - 1;
+        DayNewer.IsEnabled = i > 0;
+    }
+
+    void DayOlder_Click(object sender, RoutedEventArgs e) => MoveDay(+1);
+    void DayNewer_Click(object sender, RoutedEventArgs e) => MoveDay(-1);
+
+    void CalPinned_Click(object sender, RoutedEventArgs e)
+    {
+        CalOpen = false;
+        if (_cards.FirstOrDefault(c => c.IsPinned) is { } pinned) DayList.SelectedItem = pinned;
+        FocusPanelInput();
+    }
+
     void RebuildCards(DayCard? keep)
     {
         var today = DateOnly.FromDateTime(DateTime.Now);
@@ -436,14 +462,23 @@ public partial class PanelWindow : Window
             {
                 rows = Store.PinnedItems();
                 showDate = true;
-                SectionTitle.Text = $"固定的条目 · {rows.Count} 条 · 不会被自动清理";
+                SectionTitle.Text = Compact ? $"固定 · {rows.Count} 条 · 不会被自动清理" : $"固定的条目 · {rows.Count} 条 · 不会被自动清理";
                 EmptyText.Text = "还没有固定的条目";
             }
             else
             {
                 rows = Store.ItemsOnDay(card.Date);
                 var d = card.Date;
-                SectionTitle.Text = $"{d.Year}年{d.Month}月{d.Day}日 {DayCard.WeekName(d)} · {rows.Count} 条";
+                if (Compact)
+                {
+                    // issue #5: "今天 · 11/19 周四 · 20 条"
+                    var today = DateOnly.FromDateTime(DateTime.Now);
+                    int ago = today.DayNumber - d.DayNumber;
+                    string rel = ago switch { 0 => "今天 · ", 1 => "昨天 · ", 2 => "前天 · ", _ => "" };
+                    string date = d.Year == today.Year ? $"{d.Month}/{d.Day}" : $"{d.Year}/{d.Month}/{d.Day}";
+                    SectionTitle.Text = $"{rel}{date} {DayCard.WeekName(d)} · {rows.Count} 条";
+                }
+                else SectionTitle.Text = $"{d.Year}年{d.Month}月{d.Day}日 {DayCard.WeekName(d)} · {rows.Count} 条";
                 EmptyText.Text = card.Date == DateOnly.FromDateTime(DateTime.Now)
                     ? "今天还没有复制过内容\n复制文字或图片后会出现在这里"
                     : "这一天没有记录";
@@ -452,6 +487,7 @@ public partial class PanelWindow : Window
 
         _items.Clear();
         foreach (var r in rows) _items.Add(new ItemVm(r, showDate));
+        ApplyDateLayout();
         EmptyState.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         if (_items.Count > 0)
         {
@@ -470,9 +506,10 @@ public partial class PanelWindow : Window
         Watchdog.Step(vm.IsImage ? $"paste: put image {vm.Item.Width}x{vm.Item.Height} on clipboard" : "paste: put text on clipboard");
         try
         {
-            if (!Paster.SetClipboard(vm.Item))
+            var formats = vm.Item.Formats.Count > 0 ? Store.GetFormats(vm.Item.Id) : null;
+            if (!Paster.SetClipboard(vm.Item, formats, out var problem))
             {
-                EmptyText.Text = "无法写入剪贴板（图片文件可能已被删除）";
+                EmptyText.Text = problem ?? "无法写入剪贴板（图片文件可能已被删除）";
                 EmptyState.Visibility = Visibility.Visible;
                 return;
             }
@@ -542,6 +579,14 @@ public partial class PanelWindow : Window
     internal bool HandleKey(Key key, ModifierKeys modifiers)
     {
         bool ctrl = (modifiers & ModifierKeys.Control) != 0;
+        if (EditOpen)
+        {
+            // the editor's text box gets every other key (arrows, Enter for new lines, Delete…)
+            if (key == Key.Escape) { CloseEditor(); return true; }
+            if (key == Key.Enter && ctrl) { SaveEditor(); return true; }
+            return false;
+        }
+        if ((key == Key.F2 || (key == Key.E && ctrl)) && Selected is { IsText: true } toEdit) { OpenEditor(toEdit); return true; }
         bool searching = SearchBox.Text.Length > 0;
         switch (key)
         {
@@ -678,13 +723,66 @@ public partial class PanelWindow : Window
 
     // ───────────── calendar ─────────────
 
+    // ───────────── edit a text item (issue #6) ─────────────
+
+    ItemVm? _editing;
+    internal bool EditOpen => EditOverlay.Visibility == Visibility.Visible;
+
+    void Edit_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: ItemVm { IsText: true } vm }) OpenEditor(vm);
+        e.Handled = true;
+    }
+
+    internal void OpenEditor(ItemVm vm)
+    {
+        _editing = vm;
+        CalOpen = false;
+        EditBox.Text = vm.Item.Text ?? "";
+        EditHint.Text = vm.Item.Formats.Count > 0 ? "保存后会变成纯文本，原来的格式不保留 · Ctrl+Enter 保存"
+                                                  : "Ctrl+Enter 保存 · Esc 取消";
+        EditOverlay.Visibility = Visibility.Visible;
+        EditBox.Focus();
+        Keyboard.Focus(EditBox);
+        EditBox.CaretIndex = EditBox.Text.Length;
+    }
+
+    void CloseEditor()
+    {
+        _editing = null;
+        EditOverlay.Visibility = Visibility.Collapsed;
+        FocusPanelInput();
+    }
+
+    internal bool SaveEditor()
+    {
+        if (_editing == null) return false;
+        var text = EditBox.Text;
+        if (string.IsNullOrWhiteSpace(text)) { EditHint.Text = "内容不能为空"; return false; }
+        var id = _editing.Item.Id;
+        bool ok;
+        _muteStoreChange = true;
+        try { ok = text == _editing.Item.Text || Store.UpdateText(id, text); }
+        finally { _muteStoreChange = false; }
+        CloseEditor();
+        Reload(keepIndex: true);
+        if (!ok) { EditText("这条记录已经不存在了"); }
+        return ok;
+    }
+
+    void EditText(string msg) { EmptyText.Text = msg; EmptyState.Visibility = Visibility.Visible; }
+
+    void EditCancel_Click(object sender, RoutedEventArgs e) => CloseEditor();
+    void EditSave_Click(object sender, RoutedEventArgs e) => SaveEditor();
+
     void Cal_Click(object sender, RoutedEventArgs e)
     {
         var basis = CurrentCard is { IsPinned: false } c ? c.Date : DateOnly.FromDateTime(DateTime.Now);
         _calMonth = new DateOnly(basis.Year, basis.Month, 1);
         if (CalOpen) { CalOpen = false; return; }
         // Keep the calendar anchored below the date strip in both search states.
-        double top = CalButton.TranslatePoint(new Point(0, CalButton.ActualHeight), CalOverlay).Y + 6;
+        var anchorBtn = sender as FrameworkElement is { IsVisible: true } fe ? fe : (Compact ? CompactCalButton : CalButton);
+        double top = anchorBtn.TranslatePoint(new Point(0, anchorBtn.ActualHeight), CalOverlay).Y + 6;
         CalCard.Margin = CalShadow.Margin = new Thickness(0, top, 14, 0);
         BuildCalendar();
         CalOpen = true;
@@ -736,6 +834,12 @@ public partial class PanelWindow : Window
                 FocusPanelInput();
             };
             CalGrid.Children.Add(btn);
+        }
+        {
+            // issue #5: the 固定 entry lives in the calendar when the date strip is hidden
+            var pinned = _cards.FirstOrDefault(c => c.IsPinned);
+            CalPinned.Content = pinned != null ? $"固定的条目 · {pinned.Count} 条" : "";
+            CalPinned.Visibility = pinned != null && Compact ? Visibility.Visible : Visibility.Collapsed;
         }
     }
 }

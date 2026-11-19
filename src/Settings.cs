@@ -21,6 +21,8 @@ public sealed class Settings
     public string? NotifiedVersion { get; set; }
     /// <summary>Upper bound for agosclip.log + agosclip.old.log together.</summary>
     public int LogMaxMB { get; set; } = 5;
+    /// <summary>Issue #5: the full-width date-card strip. Off = compact title row with ‹ › and the calendar.</summary>
+    public bool ShowDateCards { get; set; }
 
     /// <summary>Custom folder for history.db + images; null = the default (ConfigDir).</summary>
     public string? DataLocation { get; set; }

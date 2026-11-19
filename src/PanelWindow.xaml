@@ -80,12 +80,15 @@
                                         <ColumnDefinition/>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="{Binding Meta}" FontSize="11" Foreground="{DynamicResource SubFg}"
                                                VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                    <Button x:Name="pinBtn" Grid.Column="1" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
+                                    <Button x:Name="editBtn" Grid.Column="1" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
+                                            Content="&#xE70F;" ToolTip="编辑 (F2)" Click="Edit_Click" Visibility="Hidden"/>
+                                    <Button x:Name="pinBtn" Grid.Column="2" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
                                             Content="{Binding PinGlyph}" ToolTip="固定 / 取消固定 (Ctrl+P)" Click="Pin_Click" Visibility="Hidden"/>
-                                    <Button x:Name="delBtn" Grid.Column="2" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
+                                    <Button x:Name="delBtn" Grid.Column="3" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
                                             Content="&#xE74D;" ToolTip="删除 (Del)" Click="Delete_Click" Visibility="Hidden"/>
                                 </Grid>
                             </Grid>
@@ -99,13 +102,19 @@
                                 <Setter TargetName="b" Property="Background" Value="{DynamicResource CardHover}"/>
                                 <Setter TargetName="pinBtn" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="delBtn" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="editBtn" Property="Visibility" Value="Visible"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="b" Property="Background" Value="{DynamicResource SelBg}"/>
                                 <Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource Accent}"/>
                                 <Setter TargetName="pinBtn" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="delBtn" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="editBtn" Property="Visibility" Value="Visible"/>
                             </Trigger>
+                            <!-- only text can be edited (declared last so it wins over hover/selected) -->
+                            <DataTrigger Binding="{Binding IsText}" Value="False">
+                                <Setter TargetName="editBtn" Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -116,6 +125,20 @@
             <Grid>
                 <TextBlock x:Name="txt" Text="{Binding Preview}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
                            LineHeight="19" LineStackingStrategy="BlockLineHeight" MaxHeight="76"/>
+                <Grid x:Name="files" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition/>
+                    </Grid.ColumnDefinitions>
+                    <Border Width="34" Height="34" CornerRadius="8" Background="{DynamicResource Track}" VerticalAlignment="Top" Margin="0,1,10,0">
+                        <TextBlock Text="{Binding FilesGlyph}" FontFamily="{StaticResource IconFont}" FontSize="16"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource Accent}"/>
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding FilesTitle}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding FilesDetail}" FontSize="11.5" Foreground="{DynamicResource SubFg}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                    </StackPanel>
+                </Grid>
                 <Rectangle x:Name="img" Visibility="Collapsed" HorizontalAlignment="Left"
                            Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}" RadiusX="7" RadiusY="7"
                            Stroke="{DynamicResource CardBorder}" StrokeThickness="1"
@@ -129,6 +152,10 @@
                 <DataTrigger Binding="{Binding IsImage}" Value="True">
                     <Setter TargetName="txt" Property="Visibility" Value="Collapsed"/>
                     <Setter TargetName="img" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsFiles}" Value="True">
+                    <Setter TargetName="txt" Property="Visibility" Value="Collapsed"/>
+                    <Setter TargetName="files" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
@@ -219,7 +246,7 @@
                 </Border>
 
                 <!-- Date segments -->
-                <Border Grid.Row="2" Margin="0,10,0,0" Background="{DynamicResource Track}" CornerRadius="11" Padding="3">
+                <Border x:Name="DateStrip" Grid.Row="2" Margin="0,10,0,0" Background="{DynamicResource Track}" CornerRadius="11" Padding="3">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition/>
@@ -249,8 +276,23 @@
                 </Border>
 
                 <!-- Section title -->
-                <TextBlock x:Name="SectionTitle" Grid.Row="3" Margin="4,12,2,7" FontSize="11.5" FontWeight="SemiBold"
-                           Foreground="{DynamicResource SubFg}"/>
+                <!-- Section title. Compact mode (issue #5): it also carries ‹ › and the calendar, replacing the date strip. -->
+                <Grid x:Name="SectionRow" Grid.Row="3" Margin="0,12,-4,7">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="DayOlder" Style="{StaticResource IconButton}" Width="26" Height="26" FontSize="10" Content="&#xE76B;"
+                            ToolTip="前一天 (→)" Click="DayOlder_Click" Visibility="Collapsed" Margin="0,0,2,0"/>
+                    <TextBlock x:Name="SectionTitle" Grid.Column="1" Margin="4,0,2,0" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                               Foreground="{DynamicResource SubFg}" TextTrimming="CharacterEllipsis"/>
+                    <Button x:Name="DayNewer" Grid.Column="2" Style="{StaticResource IconButton}" Width="26" Height="26" FontSize="10" Content="&#xE76C;"
+                            ToolTip="后一天 (←)" Click="DayNewer_Click" Visibility="Collapsed"/>
+                    <Button x:Name="CompactCalButton" Grid.Column="3" Style="{StaticResource IconButton}" Content="&#xE787;" FontSize="14"
+                            Width="30" Height="26" ToolTip="按日历选择日期 / 固定的条目" Click="Cal_Click" Visibility="Collapsed"/>
+                </Grid>
 
                 <!-- Items -->
                 <Grid Grid.Row="4">
@@ -314,7 +356,56 @@
                                 <TextBlock Text="日" HorizontalAlignment="Center"/>
                             </UniformGrid>
                             <UniformGrid x:Name="CalGrid" Columns="7"/>
+                            <Button x:Name="CalPinned" Margin="0,8,0,0" Cursor="Hand" Focusable="False" Click="CalPinned_Click" Visibility="Collapsed">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="b" CornerRadius="8" Padding="10,7" Background="{DynamicResource Track}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="&#xE718;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="{DynamicResource Accent}"
+                                                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                                <TextBlock x:Name="CalPinnedText" Text="{TemplateBinding Content}" Foreground="{DynamicResource Fg}"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="b" Property="Background" Value="{DynamicResource SelBg}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
                         </StackPanel>
+                    </Border>
+                </Grid>
+
+                <!-- Edit a text item (issue #6) -->
+                <Grid x:Name="EditOverlay" Grid.RowSpan="6" Margin="-14,-10" Visibility="Collapsed">
+                    <Rectangle Fill="{DynamicResource Dim}" RadiusX="8" RadiusY="8"/>
+                    <Border Margin="12,48,12,12" Background="{DynamicResource OverlayBg}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1"
+                            CornerRadius="12" Padding="12">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="24" ShadowDepth="6" Direction="270" Opacity="0.22" Color="Black"/>
+                        </Border.Effect>
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="编辑" FontWeight="SemiBold" FontSize="14" Margin="2,0,0,8"/>
+                            <TextBox x:Name="EditBox" Grid.Row="1" AcceptsReturn="True" AcceptsTab="True" TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto" Padding="8,6" FontSize="13"
+                                     Foreground="{DynamicResource Fg}" CaretBrush="{DynamicResource Accent}" Background="{DynamicResource CardBg}"
+                                     BorderBrush="{DynamicResource CardBorder}" SelectionBrush="{DynamicResource Accent}"/>
+                            <Grid Grid.Row="2" Margin="0,10,0,0">
+                                <TextBlock x:Name="EditHint" FontSize="11" Foreground="{DynamicResource SubFg}" VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" Margin="2,0,150,0"/>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button Content="取消" Click="EditCancel_Click" Style="{StaticResource PillButton}" Margin="0,0,8,0"/>
+                                    <Button x:Name="EditSave" Content="保存" Click="EditSave_Click" Style="{StaticResource AccentButton}"/>
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
                     </Border>
                 </Grid>
             </Grid>

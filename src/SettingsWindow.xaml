@@ -271,6 +271,9 @@
                             <TextBlock Style="{StaticResource Hint}" Text="过期自动删除，固定的条目除外"/>
                             <Border Style="{StaticResource Sep}" Margin="0,10,0,6"/>
                             <CheckBox x:Name="RecordImages" Style="{StaticResource Switch}" Click="Changed" Margin="0,2" Content="记录图片"/>
+                            <Border Style="{StaticResource Sep}"/>
+                            <CheckBox x:Name="ShowDateCards" Style="{StaticResource Switch}" Click="Changed" Margin="0,2"
+                                      Content="显示日期卡片栏" Tag="关闭时面板更紧凑，用标题旁的 ‹ › 或日历切换日期"/>
                         </StackPanel>
                     </Border>
                     <Border Style="{StaticResource Section}">

@@ -140,13 +140,28 @@ public sealed class ClipboardMonitor : IDisposable
         }
 
         bool hasImage = formats.Any(f => f is "PNG" or "image/png" or "DeviceIndependentBitmap" or "Format17" or "Bitmap" or "System.Drawing.Bitmap");
+        var who2 = fromUs ? null : source;
+
+        // Files/folders copied in Explorer (issue #4): keep the path list; pasting restores it as a copy.
+        if (Has(data, DataFormats.FileDrop) && Get(data, DataFormats.FileDrop) is string[] { Length: > 0 } paths)
+        {
+            var list = paths.Where(p => !string.IsNullOrWhiteSpace(p)).Take(5000).ToArray();
+            if (list.Length > 0)
+            {
+                var joined = string.Join("\n", list);
+                OnUi(() => _store.Upsert(ClipKind.Files, Store.FilesHash(list), joined, null, null, list.Length, 0, who2));
+                Diag(who, formats, $"files ({list.Length})");
+                return;
+            }
+        }
+
         var text = Has(data, DataFormats.UnicodeText) ? Get(data, DataFormats.UnicodeText) as string : null;
         if (!string.IsNullOrWhiteSpace(text))
         {
             if (text.Length > MaxTextChars) { Diag(who, formats, $"skipped: text too long ({text.Length})"); return; }
-            var textSource = fromUs ? null : source;
-            OnUi(() => _store.Upsert(ClipKind.Text, Store.TextHash(text), text, null, null, 0, 0, textSource));
-            Diag(who, formats, $"text ({text.Length} chars)");
+            var extra = ReadRichFormats(data, formats);
+            OnUi(() => _store.Upsert(ClipKind.Text, Store.TextHash(text), text, null, null, 0, 0, who2, formats: extra));
+            Diag(who, formats, $"text ({text.Length} chars)" + (extra.Count > 0 ? " + " + string.Join(", ", extra.Select(f => f.Name)) : ""));
             return;
         }
         // Empty/whitespace text next to a picture (some screenshot tools do this) → record the picture.
@@ -221,6 +236,38 @@ public sealed class ClipboardMonitor : IDisposable
         var tmp = path + ".tmp";
         using (var fs = File.Create(tmp)) enc.Save(fs);
         File.Move(tmp, path, true);
+    }
+
+    /// <summary>
+    /// Formats kept next to plain text so paste-back keeps styling and table structure (issue #4):
+    /// HTML (web pages, Word, Excel tables), RTF (Word, WordPad, mail), Excel's own XML Spreadsheet and CSV.
+    /// Each is capped; plain text stays the fallback for editors that take nothing else.
+    /// </summary>
+    static readonly string[] RichFormats = { DataFormats.Html, DataFormats.Rtf, "XML Spreadsheet", DataFormats.CommaSeparatedValue };
+    const int MaxFormatBytes = 4 << 20;
+
+    static System.Collections.Generic.List<ClipFormat> ReadRichFormats(IDataObject data, string[] present)
+    {
+        var list = new System.Collections.Generic.List<ClipFormat>();
+        foreach (var name in RichFormats)
+        {
+            if (!present.Contains(name)) continue;
+            try
+            {
+                switch (Get(data, name))
+                {
+                    case string str when str.Length > 0:
+                        var bytes = Encoding.UTF8.GetBytes(str);
+                        if (bytes.Length <= MaxFormatBytes) list.Add(new ClipFormat(name, bytes, IsText: true));
+                        break;
+                    case MemoryStream ms when ms.Length is > 0 and <= MaxFormatBytes:
+                        list.Add(new ClipFormat(name, ms.ToArray(), IsText: false));
+                        break;
+                }
+            }
+            catch (Exception ex) { App.Log($"rich format {name} unreadable: {ex.GetType().Name}"); }
+        }
+        return list;
     }
 
     static Stream? AsStream(object? o) => o switch

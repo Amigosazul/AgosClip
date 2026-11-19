@@ -70,6 +70,7 @@ internal static class SelfTest
                 ClipboardTests(app);
                 MoveTests(app);
                 FeedbackTests(app);
+                IssueTests(app);
             }
             Seed(app);
             PlacementTests();
@@ -410,6 +411,10 @@ internal static class SelfTest
         var (h2, r2, t2) = _mon.SaveImage(img2);
         s.Upsert(ClipKind.Image, h2, null, r2, t2, 900, 600, "截图工具", At(1, 10, 20));
 
+        s.Upsert(ClipKind.Files, Store.FilesHash(new[] { @"D:\Projects\季度报告.docx", @"D:\Projects\预算.xlsx" }),
+            "D:\\Projects\\季度报告.docx\nD:\\Projects\\预算.xlsx", null, null, 2, 0, "文件资源管理器", At(0, 15, 40));
+        s.Upsert(ClipKind.Text, Store.TextHash("名称\t数量\n苹果\t3"), "名称\t数量\n苹果\t3", null, null, 0, 0, "Excel", At(0, 15, 55),
+            new[] { new ClipFormat("XML Spreadsheet", Encoding.UTF8.GetBytes("<Workbook/>"), false) });
         s.Upsert(ClipKind.Text, Store.TextHash("git log --oneline --graph --decorate -n 20"), "git log --oneline --graph --decorate -n 20", null, null, 0, 0, null, At(0, 16, 30));
         foreach (var it in s.ItemsOnDay(Today).Where(i => i.Text?.StartsWith("快递") == true)) s.SetPinned(it.Id, true);
         foreach (var it in s.ItemsOnDay(Today.AddDays(-12))) s.SetPinned(it.Id, true);
@@ -680,16 +685,36 @@ internal static class SelfTest
                 var hwnd = new System.Windows.Interop.WindowInteropHelper(panel).Handle;
                 long style = (long)Native.GetWindowLongPtr(hwnd, -16);
                 Check((style & 0x00080000L) == 0, "panel has no system menu, so no stray caption ✕");
-                // click the 固定 card with the mouse (index 0) → it must become selected
+                // click the 固定 card with the mouse (index 0) → it must become selected (needs the date-card strip)
+                App.Current.Settings.ShowDateCards = true;
+                panel.PrepareSnapshot(-1);
+                Pump(200);
                 var item = (System.Windows.Controls.ListBoxItem)panel.DayList.ItemContainerGenerator.ContainerFromIndex(0);
                 item.RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0, System.Windows.Input.MouseButton.Left)
                     { RoutedEvent = UIElement.PreviewMouseLeftButtonDownEvent });
                 Pump(200);
                 Check(panel.DayList.SelectedIndex == 0 && panel.SectionTitle.Text.StartsWith("固定"), "clicking a date card selects it (固定)");
+                App.Current.Settings.ShowDateCards = false;
                 panel.PrepareSnapshot(-1);
                 Pump(200);
 
                 // pin to desktop
+                // editor overlay (#6) and the full date-card strip, for review
+                if (panel.ItemList.Items.OfType<ItemVm>().FirstOrDefault(v => v.IsText) is { } ev)
+                {
+                    panel.OpenEditor(ev);
+                    Pump(200);
+                    RenderOnGlass(root, Path.Combine(outDir, "panel-editor-light.png"), dark, glass);
+                    panel.HandleKey(System.Windows.Input.Key.Escape, System.Windows.Input.ModifierKeys.None);
+                }
+                App.Current.Settings.ShowDateCards = true;
+                panel.PrepareSnapshot(-1);
+                Pump(200);
+                RenderOnGlass(root, Path.Combine(outDir, "panel-today-cards-light.png"), dark, glass);
+                App.Current.Settings.ShowDateCards = false;
+                panel.PrepareSnapshot(-1);
+                Pump(200);
+
                 panel.StickyBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
                 Check(panel.IsSticky && (string)panel.StickyBtn.Content == "\uE840", "pin button turns pin mode on");
                 Pump(200);
@@ -850,5 +875,134 @@ internal static class SelfTest
         Check(url.StartsWith("https://github.com/Amigosazul/AgosClip/issues/new?title=") && url.Length < 6000, $"issue link is valid ({url.Length} chars)");
         File.Copy(path, Path.Combine(_outDir, "diagnostics-sample.txt"), true); // kept with the screenshots for review
         File.Delete(path);
+    }
+
+    // ───────────── issues #4 (files, rich text, tables), #5 (compact dates), #6 (edit) ─────────────
+
+    static void IssueTests(App app)
+    {
+        var s = app.Store;
+        _mon ??= new ClipboardMonitor(s, () => app.Settings);
+
+        // #4 files: Explorer-style copy → one Files item; paste-back is a copy and skips missing files
+        var dir = Path.Combine(Settings.ConfigDir, "files-test");
+        Directory.CreateDirectory(Path.Combine(dir, "子文件夹"));
+        var f1 = Path.Combine(dir, "报告.txt"); File.WriteAllText(f1, "a");
+        var f2 = Path.Combine(dir, "数据.csv"); File.WriteAllText(f2, "b");
+        var d1 = Path.Combine(dir, "子文件夹");
+        var drop = new System.Collections.Specialized.StringCollection { f1, f2, d1 };
+        var fobj = new DataObject();
+        fobj.SetFileDropList(drop);
+        Clipboard.SetDataObject(fobj, true);
+        Pump(900);
+        var files = s.ItemsOnDay(Today).FirstOrDefault(i => i.Kind == ClipKind.Files);
+        Check(files != null && files.Paths.SequenceEqual(new[] { f1, f2, d1 }), "copied files/folders are recorded as one item (#4)");
+        if (files != null)
+        {
+            var vm = new ItemVm(files, false);
+            Check(vm.FilesTitle == "报告.txt 等 3 项" && vm.Meta.Contains("3 项"), $"files item shows names and count ({vm.FilesTitle})");
+            Check(Paster.SetClipboard(files, null, out var p0) && p0 == null && Clipboard.ContainsFileDropList()
+                  && Clipboard.GetFileDropList().Cast<string>().SequenceEqual(new[] { f1, f2, d1 }), "paste-back restores the file list");
+            var effect = Clipboard.GetData("Preferred DropEffect") as MemoryStream;
+            Check(effect != null && BitConverter.ToInt32(effect.ToArray(), 0) == 1, "paste-back is a copy (DROPEFFECT_COPY), never a move");
+            File.Delete(f2);
+            Check(Paster.SetClipboard(files, null, out var p1) && p1 != null && p1.Contains("1 个")
+                  && Clipboard.GetFileDropList().Count == 2, "missing files are skipped and reported");
+            Check(new ItemVm(files, false).Meta.Contains("1 项已不存在"), "the list marks missing files");
+            Directory.Delete(dir, true);
+            Check(!Paster.SetClipboard(files, null, out var p2) && p2 != null, "nothing to paste when all files are gone");
+        }
+
+        // #4 rich text + tables: HTML/RTF/XML Spreadsheet are kept next to the text and pasted back
+        var html = "Version:0.9\r\nStartHTML:00000097\r\nEndHTML:00000170\r\nStartFragment:00000131\r\nEndFragment:00000134\r\n<html><body><!--StartFragment--><b>粗体</b> <a href=\"https://example.com\">链接</a><!--EndFragment--></body></html>";
+        var rtf = @"{\rtf1\ansi {\b bold} text}";
+        var rich = new DataObject();
+        rich.SetText("粗体 链接", TextDataFormat.UnicodeText);
+        rich.SetData(DataFormats.Html, html);
+        rich.SetData(DataFormats.Rtf, rtf);
+        Clipboard.SetDataObject(rich, true);
+        Pump(900);
+        var richItem = s.Search("粗体 链接").FirstOrDefault();
+        Check(richItem != null && richItem.Formats.Contains("HTML Format") && richItem.Formats.Contains("Rich Text Format"),
+            $"rich text keeps HTML and RTF ({string.Join(", ", richItem?.Formats ?? Array.Empty<string>())})");
+        if (richItem != null)
+        {
+            Check(new ItemVm(richItem, false).Badge == "富文本", "rich text is labelled 富文本");
+            Clipboard.SetText("something else");
+            Pump(500);
+            Check(Paster.SetClipboard(richItem, s.GetFormats(richItem.Id)) && Clipboard.GetText() == "粗体 链接"
+                  && (Clipboard.GetData(DataFormats.Html) as string)?.Contains("<b>粗体</b>") == true
+                  && (Clipboard.GetData(DataFormats.Rtf) as string)?.Contains(@"{\b bold}") == true,
+                "paste-back offers plain text, HTML and RTF");
+            Pump(700);
+        }
+        var table = new DataObject();
+        table.SetText("名称\t数量\r\n苹果\t3\r\n", TextDataFormat.UnicodeText);
+        table.SetData(DataFormats.Html, html.Replace("<b>粗体</b>", "<table><tr><td>名称</td><td>数量</td></tr></table>"));
+        table.SetData("XML Spreadsheet", new MemoryStream(Encoding.UTF8.GetBytes("<?xml version=\"1.0\"?><Workbook/>")));
+        Clipboard.SetDataObject(table, true);
+        Pump(900);
+        var tableItem = s.Search("苹果").FirstOrDefault();
+        Check(tableItem != null && tableItem.Formats.Contains("XML Spreadsheet") && new ItemVm(tableItem, false).Badge == "表格",
+            "Excel-style table keeps its spreadsheet format and is labelled 表格");
+
+        // #6 edit: text changes in place, pinned stays, rich formats are dropped, duplicates merge
+        if (richItem != null)
+        {
+            s.SetPinned(richItem.Id, true);
+            Check(s.UpdateText(richItem.Id, "粗体 链接（已修改）\n第二行"), "editing a text item saves");
+            var edited = s.PinnedItems().FirstOrDefault(i => i.Id == richItem.Id);
+            Check(edited != null && edited.Text == "粗体 链接（已修改）\n第二行" && edited.Formats.Count == 0,
+                "edited item keeps its pinned state and becomes plain text");
+            Check(s.Search("粗体 链接（已修改）").Count == 1, "search finds the new text");
+            s.Upsert(ClipKind.Text, Store.TextHash("合并目标"), "合并目标", null, null, 0, 0, null);
+            s.UpdateText(richItem.Id, "合并目标");
+            var merged = s.Search("合并目标");
+            Check(merged.Count == 1 && merged[0].Id == richItem.Id && merged[0].Pinned, "editing into an existing text merges the duplicate");
+        }
+        _mon.Dispose();
+        _mon = null;
+
+        // #5 compact mode and #6 editor UI
+        app.Settings.ShowDateCards = false;
+        s.Upsert(ClipKind.Text, Store.TextHash("昨天的一条"), "昨天的一条", null, null, 0, 0, null, At(1, 9, 0));
+        var panel = new PanelWindow();
+        panel.PrepareSnapshot(-1);
+        Pump(200);
+        Check(panel.DateStrip.Visibility != Visibility.Visible && panel.DayOlder.Visibility == Visibility.Visible
+              && panel.SectionTitle.Text.StartsWith("今天 · "), $"compact mode hides the date strip ({panel.SectionTitle.Text})");
+        int before = panel.DayList.SelectedIndex;
+        panel.DayOlder.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        Pump(200);
+        Check(panel.DayList.SelectedIndex == before + 1 && panel.SectionTitle.Text.StartsWith("昨天 · "),
+            $"‹ goes to the previous day ({panel.SectionTitle.Text})");
+        Check(panel.HandleKey(System.Windows.Input.Key.Left, System.Windows.Input.ModifierKeys.None) && panel.DayList.SelectedIndex == before,
+            "← / → still switch days in compact mode");
+        app.Settings.ShowDateCards = true;
+        panel.PrepareSnapshot(-1);
+        Pump(150);
+        Check(panel.DateStrip.Visibility == Visibility.Visible && panel.DayOlder.Visibility != Visibility.Visible,
+            "the 显示日期卡片栏 setting brings the strip back");
+        app.Settings.ShowDateCards = false;
+
+        panel.PrepareSnapshot(-1);
+        Pump(150);
+        var target = panel.ItemList.Items.OfType<ItemVm>().FirstOrDefault(v => v.IsText);
+        if (target != null)
+        {
+            panel.ItemList.SelectedItem = target;
+            Check(panel.HandleKey(System.Windows.Input.Key.F2, System.Windows.Input.ModifierKeys.None) && panel.EditOpen
+                  && panel.EditBox.Text == target.Item.Text, "F2 opens the editor with the full text");
+            Check(!panel.HandleKey(System.Windows.Input.Key.Down, System.Windows.Input.ModifierKeys.None),
+                "arrow keys go to the editor, not the list");
+            panel.HandleKey(System.Windows.Input.Key.Escape, System.Windows.Input.ModifierKeys.None);
+            Check(!panel.EditOpen, "Esc cancels editing");
+            panel.OpenEditor(target);
+            panel.EditBox.Text = "在面板里改过的文字";
+            Check(panel.HandleKey(System.Windows.Input.Key.Enter, System.Windows.Input.ModifierKeys.Control) && !panel.EditOpen
+                  && s.Search("在面板里改过的文字").Count == 1, "Ctrl+Enter saves the edit");
+        }
+        else Check(false, "editor test: no text item in the list");
+        panel.Close();
     }
 }
