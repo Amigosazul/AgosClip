@@ -28,6 +28,7 @@ public partial class PanelWindow : Window
     public PanelWindow()
     {
         InitializeComponent();
+        _wDip = Width; _hDip = Height; // design size; Width/Height resync while the open/close animation resizes the hwnd
         DayList.ItemsSource = _cards;
         ItemList.ItemsSource = _items;
         _hwnd = new WindowInteropHelper(this).EnsureHandle();
@@ -129,6 +130,7 @@ public partial class PanelWindow : Window
         Watchdog.Step("open panel");
         if (target == _hwnd || !Native.IsWindow(target)) target = IntPtr.Zero;
         if (IsVisible && _sticky) { if (target != IntPtr.Zero) _target = target; FocusSticky(); return; }
+        CancelClose(); // a show arrived while the close animation was still running
         _target = target;
         Glass.Apply(this);
         PausedBadge.Visibility = App.Paused ? Visibility.Visible : Visibility.Collapsed;
@@ -152,13 +154,49 @@ public partial class PanelWindow : Window
         ScrollCardsToStart();
     }
 
+    // ───────────── open / close animation ─────────────
+
+    /// <summary>
+    /// Unfolds the window from its anchor edge: below the caret/cursor it grows top→bottom; when there
+    /// is no room below, the panel sits above the anchor and grows bottom→top instead. The real window
+    /// rect is animated (not a render transform), so the glass backdrop and its shadow follow every frame.
+    /// </summary>
     void PlayOpenAnimation()
     {
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        var dur = TimeSpan.FromMilliseconds(170);
-        Root.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(120)));
-        RootScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.97, 1, dur) { EasingFunction = ease });
-        RootScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.97, 1, dur) { EasingFunction = ease });
+        _closing = false;
+        Root.BeginAnimation(OpacityProperty, new DoubleAnimation(0.3, 1, TimeSpan.FromMilliseconds(110)));
+        var grow = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(190)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+        BeginAnimation(AnimProgressProperty, grow);
+    }
+
+    /// <summary>Anchor edge of the unfold: true = panel sits below the caret, grows downward; false = sits above, grows upward.</summary>
+    bool _expandDown = true;
+    int _fx, _fy, _fw, _fh; // final physical window rect from the last placement (= progress 1.0)
+    double _wDip, _hDip;    // design size in DIP, captured once
+    bool _closing;          // a close animation is in flight; Hide() happens when it completes
+
+    static readonly DependencyProperty AnimProgressProperty = DependencyProperty.Register(
+        nameof(AnimProgress), typeof(double), typeof(PanelWindow),
+        new PropertyMetadata(1.0, (d, _) => ((PanelWindow)d).ApplyAnimRect()));
+    double AnimProgress => (double)GetValue(AnimProgressProperty);
+
+    /// <summary>Sizes/positions the native window between the anchor edge and the full rect for the current progress.</summary>
+    void ApplyAnimRect()
+    {
+        if (_fh <= 0 || _hwnd == IntPtr.Zero) return;
+        int h = Math.Max(1, (int)Math.Round(_fh * Math.Clamp(AnimProgress, 0.0, 1.0)));
+        int y = _expandDown ? _fy : _fy + _fh - h;
+        Native.SetWindowPos(_hwnd, IntPtr.Zero, _fx, y, _fw, h, 0x0004 | 0x0010); // NOZORDER | NOACTIVATE
+    }
+
+    /// <summary>A show arrived while the close animation was running: snap back to the full rect at once.</summary>
+    void CancelClose()
+    {
+        if (!_closing) return;
+        _closing = false;
+        BeginAnimation(AnimProgressProperty, null); // base value 1.0 → full rect again
+        Root.BeginAnimation(OpacityProperty, null);
+        Root.Opacity = 1;
     }
 
     bool CalOpen
@@ -187,12 +225,28 @@ public partial class PanelWindow : Window
     }
 
 
-    /// <summary>Closes the panel (✕, Esc, Win+V). Closing explicitly also un-pins it.</summary>
+    /// <summary>
+    /// Closes the panel (✕, Esc, Win+V). Collapses back toward the edge it unfolded from — the exact
+    /// reverse of the open animation — and hides when it finishes. Closing explicitly also un-pins it.
+    /// </summary>
     public void HidePanel()
     {
         if (_sticky) SetSticky(false);
         CalOpen = false;
-        if (IsVisible) Hide();
+        if (!IsVisible || _closing) return;
+        if (Snapshot) { Hide(); return; } // self-test relies on the old instant close
+        _closing = true;
+        Root.BeginAnimation(OpacityProperty, new DoubleAnimation { To = 0, Duration = TimeSpan.FromMilliseconds(110) });
+        var shrink = new DoubleAnimation { To = 0, Duration = TimeSpan.FromMilliseconds(160), EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } };
+        shrink.Completed += (_, _) =>
+        {
+            _closing = false;
+            BeginAnimation(AnimProgressProperty, null); // base value 1.0 → full rect while hidden
+            Root.BeginAnimation(OpacityProperty, null);
+            Root.Opacity = 1;
+            Hide();
+        };
+        BeginAnimation(AnimProgressProperty, shrink);
     }
 
     internal void PlaceNear(IntPtr target)
@@ -220,13 +274,19 @@ public partial class PanelWindow : Window
         Native.GetMonitorInfo(mon, ref mi);
         double scale = 1;
         if (Native.GetDpiForMonitor(mon, 0, out uint dpi, out _) == 0) scale = dpi / 96.0;
-        int w = (int)Math.Round(Width * scale), h = (int)Math.Round(Height * scale), gap = (int)(6 * scale);
+        int w = (int)Math.Round(_wDip * scale), h = (int)Math.Round(_hDip * scale), gap = (int)(6 * scale);
         var wa = mi.rcWork;
 
         int x = pt.X, y = pt.Y + gap;
-        if (y + h > wa.Bottom) y = pt.Y - caretH - h - gap;
+        _expandDown = true;      // below the anchor: unfold top → bottom …
+        if (y + h > wa.Bottom)   // … unless there is no room below: unfold bottom → top instead
+        {
+            y = pt.Y - caretH - h - gap;
+            _expandDown = false;
+        }
         x = Math.Clamp(x, wa.Left + gap, Math.Max(wa.Left + gap, wa.Right - w - gap));
         y = Math.Clamp(y, wa.Top + gap, Math.Max(wa.Top + gap, wa.Bottom - h - gap));
+        (_fx, _fy, _fw, _fh) = (x, y, w, h);
         Native.SetWindowPos(_hwnd, new IntPtr(-1), x, y, 0, 0, 0x0001 | 0x0010); // NOSIZE | NOACTIVATE, topmost
     }
 
@@ -242,10 +302,12 @@ public partial class PanelWindow : Window
         Native.GetMonitorInfo(mon, ref mi);
         double scale = 1;
         if (Native.GetDpiForMonitor(mon, 0, out uint dpi, out _) == 0) scale = dpi / 96.0;
-        int w = (int)Math.Round(Width * scale), h = (int)Math.Round(Height * scale);
+        int w = (int)Math.Round(_wDip * scale), h = (int)Math.Round(_hDip * scale);
         var wa = mi.rcWork;
         x = Math.Clamp(x, wa.Left, Math.Max(wa.Left, wa.Right - w));
         y = Math.Clamp(y, wa.Top, Math.Max(wa.Top, wa.Bottom - h));
+        _expandDown = true; // a remembered spot has no anchor edge: unfold downward from its top
+        (_fx, _fy, _fw, _fh) = (x, y, w, h);
         Native.SetWindowPos(_hwnd, new IntPtr(-1), x, y, 0, 0, 0x0001 | 0x0010);
         return true;
     }

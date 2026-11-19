@@ -162,10 +162,7 @@
     </Window.Resources>
 
     <Border x:Name="Root" Background="{DynamicResource PanelBg}" BorderBrush="{DynamicResource Hairline}"
-            BorderThickness="1" CornerRadius="8" RenderTransformOrigin="0.5,0" MouseLeftButtonDown="Root_MouseDown">
-        <Border.RenderTransform>
-            <ScaleTransform x:Name="RootScale"/>
-        </Border.RenderTransform>
+            BorderThickness="1" CornerRadius="8" MouseLeftButtonDown="Root_MouseDown">
         <Grid>
             <Border Height="140" VerticalAlignment="Top" CornerRadius="8,8,0,0" Background="{DynamicResource Sheen}" IsHitTestVisible="False"/>
             <!-- grip: hints that the panel can be dragged by its top -->
