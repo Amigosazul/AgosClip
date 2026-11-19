@@ -1,9 +1,9 @@
 {
-  "version": "1.8.0",
-  "file": "AgosClip-Setup-1.8.0.exe",
-  "sha256": "9dfde6dec56a8b670568720226d07b4066817d80ee704a863be0533b529ff36c",
-  "size": 52779391,
-  "notes": "## AgosClip 1.8.0\n\n感谢 @Richard2091 提交的 PR 和建议！这一版大部分改进都来自他的贡献。\n\n**面板**\n- 面板会出现在当前输入框旁边，并且不挡住输入框；没有输入框时出现在鼠标旁。（#3）\n- 打开和关闭时，面板会从靠近输入框或鼠标的那一边展开、收起，切换得快也不会闪。（#2）\n- 搜索框默认收起：点右上角 🔍 或按 Ctrl+F 展开，展开后可以直接输入。（#7，解决 #1）\n- 默认改为紧凑的日期标题：“‹ 今天 · 11/19 周四 · 20 条 › 📅”。用 ‹ › 或 ← → 切换日期，“固定的条目”放进了月历。想要原来那排日期卡片，可以在 设置 → 记录 → 显示日期卡片栏 里打开。（#5）\n\n**记录更多内容**（#4）\n- 在资源管理器里复制的文件和文件夹会被记录下来。从历史里粘贴时一定是复制，不会移动原文件；已经不存在的文件会标出来并跳过。\n- 从网页、Word、邮件复制的内容会保留富文本（HTML、RTF），从 Excel 复制的会保留表格结构。粘贴回支持的程序时，格式不会丢；列表里会标出“富文本”或“表格”。\n\n**编辑**（#6）\n- 文字记录可以直接修改：点 ✏️ 或按 F2，编辑框里按 Ctrl+Enter 保存、Esc 取消。固定状态会保留。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.8.0/AgosClip-Setup-1.8.0.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.8.0/AgosClip-Setup-1.8.0.exe",
+  "version": "1.8.1",
+  "file": "AgosClip-Setup-1.8.1.exe",
+  "sha256": "813478ec11f72159e2075f52e9b6208a77ce13beaa1595cc9546d1f8c6263c87",
+  "size": 52763339,
+  "notes": "## AgosClip 1.8.1\n\n**修复：Windows 11 设置窗口右上角重影**\n- Windows 11 会在设置窗口的毛玻璃上额外画一套系统的最小化、最大化、关闭按钮，和窗口自带的按钮叠在一起，看起来就是重影。现在不会再出现了，右上角只剩窗口自己的“最小化”和“关闭”。\n- 点任务栏图标仍然可以最小化、还原窗口，Alt+F4 也照常能关闭。\n- 用键盘选中按钮时，不再显示老式的虚线框，改为 Win11 风格的圆角蓝色边框。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.8.1/AgosClip-Setup-1.8.1.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.8.1/AgosClip-Setup-1.8.1.exe",
   "mirrors": [
     "https://ghfast.top/",
     "https://gh-proxy.com/",
