@@ -41,8 +41,11 @@ internal static class SelfTest
 
     static DateOnly Today => DateOnly.FromDateTime(DateTime.Now);
 
-    public static int Run(App app, string outDir)
+    public static int Run(App app, string outDir, bool animationOnly = false)
     {
+        // Self-tests must use an explicitly configured data directory, never the normal default.
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AGOSCLIP_DATA")))
+            throw new InvalidOperationException("Self-test requires AGOSCLIP_DATA to point at an isolated test folder. Use tools/selftest.ps1.");
         Directory.CreateDirectory(outDir);
         Report.AppendLine("data dir: " + Settings.DataDir);
         try
@@ -50,13 +53,17 @@ internal static class SelfTest
             app.Settings = new Settings();
             app.Store = new Store();
             Theme.Apply(false);
-            StoreTests(app.Store);
-            ClipboardTests(app);
-            MoveTests(app);
-            FeedbackTests(app);
+            if (!animationOnly)
+            {
+                StoreTests(app.Store);
+                ClipboardTests(app);
+                MoveTests(app);
+                FeedbackTests(app);
+            }
             Seed(app);
+            AnimationTests(app, outDir);
             Snapshots(outDir);
-            if (Environment.GetEnvironmentVariable("AGOSCLIP_UPDATE_TEST") == "1") UpdateTest();
+            if (!animationOnly && Environment.GetEnvironmentVariable("AGOSCLIP_UPDATE_TEST") == "1") UpdateTest();
         }
         catch (Exception ex)
         {
@@ -205,6 +212,7 @@ internal static class SelfTest
 
     static void Seed(App app)
     {
+        _mon ??= new ClipboardMonitor(app.Store, () => app.Settings);
         var s = app.Store;
         s.ClearAll(false);
         var rows = new List<(int d, int h, int m, string text, string app)>
@@ -300,6 +308,130 @@ internal static class SelfTest
         g.Arrange(new Rect(0, 0, w, h));
         g.UpdateLayout();
         Render(g, w, h, path);
+    }
+
+    static void AnimationTests(App app, string outDir)
+    {
+        var panel = new PanelWindow();
+        // Keep synthetic focus changes out of a real in-progress IME composition on the user's desktop.
+        System.Windows.Input.InputMethod.SetIsInputMethodEnabled(panel.SearchBox, false);
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(panel).Handle;
+        var settings = app.Settings;
+        int? oldX = settings.PanelX, oldY = settings.PanelY;
+        Native.GetCursorPos(out var cursor);
+        var mon = Native.MonitorFromPoint(cursor, 2);
+        var mi = new Native.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>() };
+        Native.GetMonitorInfo(mon, ref mi);
+        var progressProperty = (DependencyProperty)typeof(PanelWindow).GetField("AnimProgressProperty",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
+        var expandDown = typeof(PanelWindow).GetField("_expandDown",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        void Seek(double value) => panel.SetValue(progressProperty, value);
+        Native.RECT Rect() { Native.GetWindowRect(hwnd, out var r); return r; }
+        try
+        {
+            Theme.Apply(false);
+            settings.PanelX = mi.rcWork.Left + 100;
+            settings.PanelY = mi.rcWork.Top + 60;
+            int firstVisibleHeight = 0;
+            panel.IsVisibleChanged += (_, _) =>
+            {
+                if (panel.IsVisible && firstVisibleHeight == 0) { var r = Rect(); firstVisibleHeight = r.Bottom - r.Top; }
+            };
+            panel.ShowFor(IntPtr.Zero);
+            Check(!SystemParameters.ClientAreaAnimation || firstVisibleHeight is > 0 and <= 2,
+                $"open is collapsed before the first visible frame ({firstVisibleHeight}px)");
+            Pump(320);
+            var full = Rect();
+            Check(panel.IsVisible && !panel.IsClosing && full.Bottom - full.Top >= 580,
+                "open completes at full height");
+            var viewport = (FrameworkElement)panel.Content;
+            double viewportHeight = viewport.ActualHeight, rootHeight = panel.Root.ActualHeight;
+
+            // Deterministic checkpoints use the actual native rect and WPF layout, independent of frame rate.
+            foreach (bool down in new[] { true, false })
+            {
+                expandDown.SetValue(panel, down);
+                // PlaceNear uses a remembered spot; select the edge afterwards to sample either direction.
+                panel.Root.VerticalAlignment = down ? VerticalAlignment.Top : VerticalAlignment.Bottom;
+                Seek(0.5);
+                Pump(40);
+                var half = Rect();
+                Check(Math.Abs((half.Bottom - half.Top) * 2 - (full.Bottom - full.Top)) <= 2 &&
+                    (down ? half.Top == full.Top : half.Bottom == full.Bottom),
+                    $"{(down ? "downward" : "upward")} reveal holds its anchor and halves the native height");
+                Check(Math.Abs(panel.Root.ActualHeight - rootHeight) < 1 &&
+                    viewport.ActualHeight < viewportHeight * 0.6,
+                    "content keeps full layout inside the shrinking viewport");
+                var offset = panel.Root.TranslatePoint(new Point(), viewport).Y;
+                Check(down ? Math.Abs(offset) < 1 : offset < -rootHeight * 0.35,
+                    "content is revealed from the correct edge without reflow");
+                RenderOnGlass(viewport, Path.Combine(outDir, down ? "reveal-down-half.png" : "reveal-up-half.png"), false, true);
+                Seek(1);
+                Pump(30);
+            }
+
+            if (SystemParameters.ClientAreaAnimation)
+            {
+                panel.HidePanel();
+                Pump(55);
+                int closingHeight = Rect().Bottom - Rect().Top;
+                panel.ShowFor(IntPtr.Zero);
+                var reversed = Rect();
+                Check(panel.IsVisible && !panel.IsClosing && Math.Abs(reversed.Bottom - reversed.Top - closingHeight) <= 2,
+                    "reopening during close continues from the current height");
+                Pump(320);
+                Check(panel.IsVisible && !panel.IsClosing && Rect().Bottom - Rect().Top == full.Bottom - full.Top,
+                    "a replaced close cannot hide the reopened panel");
+
+                var beforeHide = new List<int> { Rect().Bottom - Rect().Top };
+                System.Windows.Interop.HwndSourceHook sample = (IntPtr h, int message, IntPtr w, IntPtr l, ref bool handled) =>
+                {
+                    if (message == 0x0047 && panel.IsVisible) // WM_WINDOWPOSCHANGED, independent of compositor frame cadence
+                    {
+                        var r = Rect();
+                        beforeHide.Add(r.Bottom - r.Top);
+                    }
+                    return IntPtr.Zero;
+                };
+                var source = System.Windows.Interop.HwndSource.FromHwnd(hwnd)!;
+                source.AddHook(sample);
+                try { panel.HidePanel(); Pump(300); }
+                finally { source.RemoveHook(sample); }
+                Check(!panel.IsVisible && beforeHide.Count > 1 &&
+                    beforeHide.Zip(beforeHide.Skip(1), (a, b) => b <= a).All(x => x),
+                    $"close shrinks monotonically and hides without restoring full size ({string.Join(",", beforeHide)})");
+
+                panel.ShowFor(IntPtr.Zero);
+                Pump(35);
+                panel.HidePanel(); // interrupt opening, then reverse again before it finishes closing
+                panel.ShowFor(IntPtr.Zero);
+                Pump(320);
+                Check(panel.IsVisible && !panel.IsClosing && Rect().Bottom - Rect().Top == full.Bottom - full.Top,
+                    "rapid open-close-open settles fully open");
+                panel.Snapshot = true;
+                panel.HidePanel();
+                Check(!panel.IsVisible, "instant snapshot close cancels the live animation state");
+                panel.Snapshot = false;
+            }
+            else { panel.HidePanel(); Check(!panel.IsVisible, "system animation preference closes instantly"); }
+
+            // A real placement near the bottom must choose the upward anchor.
+            settings.PanelX = settings.PanelY = null;
+            Native.SetCursorPos(mi.rcWork.Left + 100, mi.rcWork.Bottom - 15);
+            panel.ShowFor(IntPtr.Zero);
+            Pump(320);
+            Check(!(bool)expandDown.GetValue(panel)! && panel.Root.VerticalAlignment == VerticalAlignment.Bottom,
+                "placement near the work-area bottom unfolds upward");
+            panel.HidePanel();
+            Pump(240);
+        }
+        finally
+        {
+            panel.Close();
+            settings.PanelX = oldX; settings.PanelY = oldY;
+            Native.SetCursorPos(cursor.X, cursor.Y);
+        }
     }
 
     static void Snapshots(string outDir)

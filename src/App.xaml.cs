@@ -40,10 +40,16 @@ public partial class App : Application
         base.OnStartup(e);
         DispatcherUnhandledException += (_, a) => { Log("unhandled: " + a.Exception); a.Handled = true; };
 
-        int st = Array.FindIndex(e.Args, a => a == "--selftest");
+        int st = Array.FindIndex(e.Args, a => a is "--selftest" or "--selftest-animation");
         if (st >= 0)
         {
-            Shutdown(SelfTest.Run(this, st + 1 < e.Args.Length ? e.Args[st + 1] : "selftest-out"));
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("AGOSCLIP_DATA")))
+            {
+                Shutdown(2); // self-tests must never open the normal history directory
+                return;
+            }
+            Shutdown(SelfTest.Run(this, st + 1 < e.Args.Length ? e.Args[st + 1] : "selftest-out",
+                animationOnly: e.Args[st] == "--selftest-animation"));
             return;
         }
 
@@ -162,7 +168,7 @@ public partial class App : Application
     public void TogglePanel(IntPtr target)
     {
         if (_panel == null) return;
-        if (_panel.IsVisible)
+        if (_panel.IsVisible && !_panel.IsClosing)
         {
             // pinned panel sitting in the background: Win+V brings it forward; a second Win+V closes it
             if (_panel.IsSticky && !_panel.IsActive) _panel.FocusSticky();

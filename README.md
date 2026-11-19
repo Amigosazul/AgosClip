@@ -109,7 +109,9 @@ latest.json     最新版本信息（发布脚本自动维护）
 在 Windows 上：
 
 ```powershell
-tools\selftest.ps1     # 构建，然后在临时数据目录里跑 AgosClip.exe --selftest，并把界面渲染成截图
+tools\selftest.ps1     # 构建，在独立临时数据目录里跑完整自测（会测试系统剪贴板）并生成截图
+tools\selftest.ps1 -AnimationOnly  # 只验证窗口动效、交互和主题，不改系统剪贴板
+# dotnet 不在 PATH 时可加 -Dotnet 'D:\Data\dotnet\dotnet.exe'
 tools\build.ps1        # 打包独立运行的程序，生成 dist\AgosClip-Setup-<ver>.exe
 tools\installtest.ps1  # 用单独的测试安装标识做静默安装、自测、卸载，不影响本机已安装的版本
 ```
