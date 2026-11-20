@@ -23,6 +23,9 @@ public sealed class Settings
     public int LogMaxMB { get; set; } = 5;
     /// <summary>Issue #5: the full-width date-card strip. Off = compact title row with ‹ › and the calendar.</summary>
     public bool ShowDateCards { get; set; }
+    /// <summary>Issue #11: panel size in DIP after the user resized it; 0 = the default 400 × 580.</summary>
+    public double PanelWidth { get; set; }
+    public double PanelHeight { get; set; }
 
     /// <summary>Custom folder for history.db + images; null = the default (ConfigDir).</summary>
     public string? DataLocation { get; set; }

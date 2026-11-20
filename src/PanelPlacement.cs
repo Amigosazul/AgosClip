@@ -120,19 +120,28 @@ internal static class PanelPlacement
     }
 
     public static (int X, int Y, int Width, int Height, bool ExpandDown) Calculate(PanelAnchor anchor, double widthDip, double heightDip)
+        => Calculate(anchor, widthDip, heightDip, out _, out _);
+
+    /// <summary>Also reports the monitor's scale (physical px per DIP) and work area, for resizing (issue #11).</summary>
+    public static (int X, int Y, int Width, int Height, bool ExpandDown) Calculate(PanelAnchor anchor, double widthDip, double heightDip,
+        out double scale, out Native.RECT work)
     {
         Native.RECT? bounds = anchor.Field ?? anchor.Caret;
         var monitor = bounds is { } rect ? Native.MonitorFromRect(ref rect, NearestMonitor)
             : Native.MonitorFromPoint(anchor.Cursor, NearestMonitor);
         var info = new Native.MONITORINFO { cbSize = Marshal.SizeOf<Native.MONITORINFO>() };
         Native.GetMonitorInfo(monitor, ref info);
-        double scale = Native.GetDpiForMonitor(monitor, 0, out uint dpi, out _) == 0 ? dpi / 96.0 : 1;
+        scale = Native.GetDpiForMonitor(monitor, 0, out uint dpi, out _) == 0 ? dpi / 96.0 : 1;
+        work = info.rcWork;
         return Calculate(anchor, info.rcWork, (int)Math.Round(widthDip * scale), (int)Math.Round(heightDip * scale), (int)Math.Round(6 * scale));
     }
 
     internal static (int X, int Y, int Width, int Height, bool ExpandDown) Calculate(
         PanelAnchor anchor, Native.RECT work, int width, int height, int gap)
     {
+        // a remembered size from a larger monitor must still fit this one (issue #11)
+        width = Math.Max(1, Math.Min(width, work.Right - work.Left));
+        height = Math.Max(1, Math.Min(height, work.Bottom - work.Top));
         int ClampX(int x) => Math.Clamp(x, work.Left, Math.Max(work.Left, work.Right - width));
         int ClampY(int y) => Math.Clamp(y, work.Top, Math.Max(work.Top, work.Bottom - height));
 

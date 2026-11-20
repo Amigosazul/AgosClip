@@ -30,7 +30,10 @@ public partial class PanelWindow : Window
     public PanelWindow()
     {
         InitializeComponent();
-        _wDip = Width; _hDip = Height; // native resizing updates Window.Width/Height; retain the full content size
+        // native resizing updates Window.Width/Height; keep the content size separately (issue #11: remembered)
+        var st = App.Current.Settings;
+        _wDip = st.PanelWidth > 0 ? Math.Max(MinWDip, st.PanelWidth) : DefaultW;
+        _hDip = st.PanelHeight > 0 ? Math.Max(MinHDip, st.PanelHeight) : DefaultH;
         Root.Height = _hDip;
         DayList.ItemsSource = _cards;
         ItemList.ItemsSource = _items;
@@ -54,6 +57,9 @@ public partial class PanelWindow : Window
         Closed += (_, _) => { if (_fgHook != IntPtr.Zero) Native.UnhookWinEvent(_fgHook); };
         PreviewKeyDown += OnKey;
         SmoothWheel.Attach(ItemList);
+        ItemList.PreviewMouseLeftButtonDown += ItemList_PreviewMouseDown;
+        ItemList.PreviewMouseMove += ItemList_PreviewMouseMove;
+        ItemList.PreviewMouseLeftButtonUp += ItemList_PreviewMouseUp;
         SmoothWheel.HookHorizontal(this,
             p => DayList.IsVisible && new Rect(DayList.TranslatePoint(new Point(), this), DayList.RenderSize).Contains(p),
             delta => { if (CardScroller is { } sv) sv.ScrollToHorizontalOffset(sv.HorizontalOffset + delta * 0.6); });
@@ -378,6 +384,7 @@ public partial class PanelWindow : Window
         if (openCalendar)
         {
             _calMonth = new DateOnly(DateTime.Now.Year, DateTime.Now.Month, 1);
+            _calCursor = DateOnly.FromDateTime(DateTime.Now);
             BuildCalendar();
             CalOpen = true;
         }
@@ -396,6 +403,8 @@ public partial class PanelWindow : Window
         if (_sticky) SetSticky(false);
         CalOpen = false;
         if (EditOpen) { _editing = null; EditOverlay.Visibility = Visibility.Collapsed; }
+        if (PreviewOpen) { PreviewOverlay.Visibility = Visibility.Collapsed; SetPreviewMode(""); }
+        EndDrag(commit: false);
         if (!IsVisible) { SetSearchOpen(false, animate: false, focus: false); return; }
         if (_closing) return;
         if (!AnimatePanel)
@@ -411,15 +420,18 @@ public partial class PanelWindow : Window
 
     void PlaceNear(PanelAnchor anchor)
     {
-        var (x, y, w, h, down) = PanelPlacement.Calculate(anchor, _wDip, _hDip);
+        var (x, y, w, h, down) = PanelPlacement.Calculate(anchor, _wDip, _hDip, out _scale, out _);
         _expandDown = down;
         SetPlacement(x, y, w, h);
     }
 
+    double _scale = 1; // physical px per DIP on the panel's monitor
+
     void SetPlacement(int x, int y, int w, int h)
     {
         (_fx, _fy, _fw, _fh) = (x, y, w, h);
-        _slidePx = Math.Max(4, (int)Math.Round(10.0 * w / Math.Max(1, _wDip))); // 10 DIP at the monitor's scale
+        _slidePx = Math.Max(4, (int)Math.Round(10.0 * _scale)); // 10 DIP at the monitor's scale
+        Root.Height = h / _scale; // equals _hDip unless the work area is smaller than the remembered size
         Root.VerticalAlignment = _expandDown ? VerticalAlignment.Top : VerticalAlignment.Bottom;
         ApplyAnimRect();
         Native.SetWindowPos(_hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); // NOSIZE | NOMOVE | NOACTIVATE, topmost
@@ -448,13 +460,32 @@ public partial class PanelWindow : Window
         var v = compact && !searching ? Visibility.Visible : Visibility.Collapsed;
         DayOlder.Visibility = DayNewer.Visibility = CompactCalButton.Visibility = v;
         SectionRow.Margin = compact ? new Thickness(0, 8, -4, 6) : new Thickness(0, 12, -4, 7);
-        int i = DayList.SelectedIndex;
-        DayOlder.IsEnabled = i >= 0 && i < _cards.Count - 1;
-        DayNewer.IsEnabled = i > 0;
+        DayOlder.IsEnabled = CompactTarget(older: true) >= 0;
+        DayNewer.IsEnabled = CompactTarget(older: false) >= 0;
     }
 
-    void DayOlder_Click(object sender, RoutedEventArgs e) => MoveDay(+1);
-    void DayNewer_Click(object sender, RoutedEventArgs e) => MoveDay(-1);
+    /// <summary>
+    /// Issue #12, compact mode: ‹ / ← go to the next older day with records, › / → to the next newer one.
+    /// The 固定 list is not a day, so ‹ › skip it (it lives in the calendar); from 固定, ‹ returns to today.
+    /// </summary>
+    int CompactTarget(bool older)
+    {
+        int i = DayList.SelectedIndex;
+        if (i < 0) return -1;
+        int firstDay = _cards.Count > 0 && _cards[0].IsPinned ? 1 : 0;
+        if (_cards[i].IsPinned) return older && firstDay < _cards.Count ? firstDay : -1;
+        int j = older ? i + 1 : i - 1;
+        return j >= firstDay && j < _cards.Count ? j : -1;
+    }
+
+    void DayOlder_Click(object sender, RoutedEventArgs e) => MoveCompact(older: true);
+    void DayNewer_Click(object sender, RoutedEventArgs e) => MoveCompact(older: false);
+
+    void MoveCompact(bool older)
+    {
+        int j = CompactTarget(older);
+        if (j >= 0) MoveDay(j - DayList.SelectedIndex);
+    }
 
     void CalPinned_Click(object sender, RoutedEventArgs e)
     {
@@ -625,6 +656,11 @@ public partial class PanelWindow : Window
     internal bool HandleKey(Key key, ModifierKeys modifiers)
     {
         bool ctrl = (modifiers & ModifierKeys.Control) != 0;
+        if (_dragActive)
+        {
+            if (key == Key.Escape) EndDrag(commit: false);
+            return true;
+        }
         if (EditOpen)
         {
             // the editor's text box gets every other key (arrows, Enter for new lines, Delete…)
@@ -632,13 +668,15 @@ public partial class PanelWindow : Window
             if (key == Key.Enter && ctrl) { SaveEditor(); return true; }
             return false;
         }
+        if (PreviewOpen) return HandlePreviewKey(key, ctrl);
+        if (CalOpen) return HandleCalendarKey(key, ctrl);
         if ((key == Key.F2 || (key == Key.E && ctrl)) && Selected is { IsText: true } toEdit) { OpenEditor(toEdit); return true; }
+        if (key == Key.Space && !_searchOpen && Selected is { } toPreview) { OpenPreview(toPreview); return true; }
         bool searching = SearchBox.Text.Length > 0;
         switch (key)
         {
             case Key.Escape:
-                if (CalOpen) CalOpen = false;
-                else if (searching)
+                if (searching)
                 {
                     SearchBox.Clear();
                     _searchDebounce.Stop();
@@ -662,11 +700,13 @@ public partial class PanelWindow : Window
             case Key.Enter:
                 if (Selected is { } s) Paste(s);
                 break;
+            // Issue #12: arrows follow the screen. Compact: ← = ‹ (older), → = › (newer).
+            // Date strip: cards run newest → oldest from left to right, so ← = the card on the left.
             case Key.Left when !searching:
-                MoveDay(-1);
+                if (Compact) MoveCompact(older: true); else MoveDay(-1);
                 break;
             case Key.Right when !searching:
-                MoveDay(+1);
+                if (Compact) MoveCompact(older: false); else MoveDay(+1);
                 break;
             case Key.Delete when !searching || ctrl:
                 if (Selected is { } d) DeleteItem(d);
@@ -684,6 +724,214 @@ public partial class PanelWindow : Window
                 return false;
         }
         return true;
+    }
+
+    // ───────────── resize (issue #11) ─────────────
+    // Edges and corners are thin transparent thumbs. The size is remembered (DIP, so it survives a DPI
+    // change); double-click an edge to go back to the default size.
+
+    internal const double DefaultW = 400, DefaultH = 580, MinWDip = 340, MinHDip = 420;
+    Native.POINT _rsCursor;
+    (int L, int T, int R, int B) _rsStart;
+    Native.RECT _rsWork;
+
+    void Resize_DragStarted(object sender, System.Windows.Controls.Primitives.DragStartedEventArgs e)
+    {
+        FinishAnimation(1);
+        Native.GetCursorPos(out _rsCursor);
+        _rsStart = (_fx, _fy, _fx + _fw, _fy + _fh);
+        _scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        var r = new Native.RECT { Left = _fx, Top = _fy, Right = _fx + _fw, Bottom = _fy + _fh };
+        var mon = Native.MonitorFromRect(ref r, 2);
+        var mi = new Native.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>() };
+        _rsWork = Native.GetMonitorInfo(mon, ref mi) ? mi.rcWork : r;
+    }
+
+    void Resize_DragDelta(object sender, System.Windows.Controls.Primitives.DragDeltaEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string edges }) return;
+        Native.GetCursorPos(out var c);
+        ResizeBy(edges, c.X - _rsCursor.X, c.Y - _rsCursor.Y);
+    }
+
+    /// <summary>Moves the given edges ("L", "T", "R", "B" or a corner like "BR") by a physical-pixel offset from the drag start.</summary>
+    internal void ResizeBy(string edges, int dx, int dy)
+    {
+        var (l, t, r, b) = _rsStart;
+        int minW = (int)Math.Round(MinWDip * _scale), minH = (int)Math.Round(MinHDip * _scale);
+        if (edges.Contains('L')) l = Math.Clamp(l + dx, _rsWork.Left, r - minW);
+        if (edges.Contains('R')) r = Math.Clamp(r + dx, l + minW, Math.Max(l + minW, _rsWork.Right));
+        if (edges.Contains('T')) t = Math.Clamp(t + dy, _rsWork.Top, b - minH);
+        if (edges.Contains('B')) b = Math.Clamp(b + dy, t + minH, Math.Max(t + minH, _rsWork.Bottom));
+        ApplySize(l, t, r - l, b - t);
+    }
+
+    void ApplySize(int x, int y, int w, int h)
+    {
+        _wDip = w / _scale;
+        _hDip = h / _scale;
+        Root.Height = _hDip;
+        (_fx, _fy, _fw, _fh) = (x, y, w, h);
+        ApplyAnimRect();
+    }
+
+    void Resize_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e) => SaveSize();
+
+    void SaveSize()
+    {
+        var st = App.Current.Settings;
+        st.PanelWidth = Math.Abs(_wDip - DefaultW) < 1 ? 0 : Math.Round(_wDip);
+        st.PanelHeight = Math.Abs(_hDip - DefaultH) < 1 ? 0 : Math.Round(_hDip);
+        try { st.Save(); } catch (Exception ex) { App.Log("save panel size: " + ex.Message); }
+    }
+
+    /// <summary>Double-click an edge: back to 400 × 580, keeping the anchor edge where it is.</summary>
+    void Resize_DoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        Resize_DragStarted(sender, null!);
+        int w = (int)Math.Round(DefaultW * _scale), h = (int)Math.Round(DefaultH * _scale);
+        int x = Math.Clamp(_fx, _rsWork.Left, Math.Max(_rsWork.Left, _rsWork.Right - w));
+        int y = _expandDown ? _fy : _fy + _fh - h;
+        y = Math.Clamp(y, _rsWork.Top, Math.Max(_rsWork.Top, _rsWork.Bottom - h));
+        ApplySize(x, y, w, h);
+        SaveSize();
+        e.Handled = true;
+    }
+
+    /// <summary>Self-test: start a resize from the current rect as if a thumb was pressed.</summary>
+    internal void BeginResizeForTest() => Resize_DragStarted(this, null!);
+    internal void EndResizeForTest() => SaveSize();
+    internal (int W, int H) PhysicalSize => (_fw, _fh);
+    internal (double W, double H) SizeDip => (_wDip, _hDip);
+
+    // ───────────── drag to reorder (issue #13) ─────────────
+    // Press anywhere on a card except its buttons and drag: the card moves through the list live and the
+    // order is saved on release. A press without movement is still a click (paste). Search results
+    // can't be arranged (they mix days). Esc while dragging puts the card back.
+
+    ItemVm? _pressVm;
+    Point _pressPt;
+    bool _dragActive;
+    int _dragFrom;
+    DispatcherTimer? _dragTimer;
+    internal bool DragActive => _dragActive;
+
+    bool CanArrange => Query.Length == 0 && _items.Count > 1 && CurrentCard != null;
+
+    void ItemList_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _pressVm = null;
+        if (!CanArrange || e.OriginalSource is not DependencyObject src) return;
+        for (var d = src; d != null && d != ItemList; d = VisualTreeHelper.GetParent(d))
+        {
+            if (d is System.Windows.Controls.Primitives.ButtonBase or System.Windows.Controls.Primitives.ScrollBar) return;
+            if (d is ListBoxItem { DataContext: ItemVm vm }) { _pressVm = vm; _pressPt = e.GetPosition(ItemList); return; }
+        }
+    }
+
+    void ItemList_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_pressVm == null) return;
+        if (e.LeftButton != MouseButtonState.Pressed) { if (!_dragActive) _pressVm = null; return; }
+        var p = e.GetPosition(ItemList);
+        if (!_dragActive)
+        {
+            if (Math.Abs(p.Y - _pressPt.Y) < 6 && Math.Abs(p.X - _pressPt.X) < 6) return;
+            BeginDrag(_pressVm);
+        }
+        DragTo(p.Y);
+    }
+
+    void ItemList_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_dragActive) { EndDrag(commit: true); e.Handled = true; } // a drag is not a click: don't paste
+        _pressVm = null;
+    }
+
+    void BeginDrag(ItemVm vm)
+    {
+        _dragActive = true;
+        _dragFrom = _items.IndexOf(vm);
+        vm.Dragging = true;
+        ItemList.SelectedItem = vm;
+        Mouse.OverrideCursor = Cursors.SizeNS;
+        ItemList.CaptureMouse();
+        ItemList.LostMouseCapture += ItemList_LostCapture;
+        _dragTimer ??= new DispatcherTimer(TimeSpan.FromMilliseconds(16), DispatcherPriority.Input, (_, _) => AutoScroll(), Dispatcher);
+        _dragTimer.Start();
+    }
+
+    void ItemList_LostCapture(object sender, MouseEventArgs e) { if (_dragActive) EndDrag(commit: true); }
+
+    /// <summary>Near the top or bottom edge the list scrolls by itself, faster the closer the pointer gets.</summary>
+    void AutoScroll()
+    {
+        if (!_dragActive || FindChild<ScrollViewer>(ItemList) is not { } sv) return;
+        double y = Mouse.GetPosition(ItemList).Y, h = ItemList.ActualHeight, zone = 36;
+        double speed = y < zone ? -(zone - y) : y > h - zone ? y - (h - zone) : 0;
+        if (speed == 0) return;
+        sv.ScrollToVerticalOffset(sv.VerticalOffset + Math.Clamp(speed, -zone, zone) * 0.5);
+        DragTo(Math.Clamp(y, 0, h));
+    }
+
+    /// <summary>
+    /// Moves the dragged card past a neighbour once the pointer crosses that neighbour's middle. Using the
+    /// middle (not the edge) keeps cards of different heights from swapping back and forth.
+    /// </summary>
+    void DragTo(double y)
+    {
+        var vm = _items.FirstOrDefault(v => v.Dragging);
+        if (vm == null) return;
+        int cur = _items.IndexOf(vm), target = cur;
+        for (int i = 0; i < _items.Count; i++)
+        {
+            if (i == cur || ItemList.ItemContainerGenerator.ContainerFromIndex(i) is not ListBoxItem c || !c.IsVisible) continue;
+            double top = c.TranslatePoint(new Point(), ItemList).Y, mid = top + c.ActualHeight / 2;
+            if (i < cur && y < mid) { target = Math.Min(target, i); }
+            else if (i > cur && y > mid) { target = Math.Max(target, i); }
+        }
+        if (target != cur)
+        {
+            _items.Move(cur, target);
+            ItemList.SelectedItem = vm;
+        }
+    }
+
+    internal void EndDrag(bool commit)
+    {
+        _pressVm = null;
+        if (!_dragActive) return;
+        _dragActive = false;
+        _dragTimer?.Stop();
+        ItemList.LostMouseCapture -= ItemList_LostCapture;
+        if (ItemList.IsMouseCaptured) ItemList.ReleaseMouseCapture();
+        Mouse.OverrideCursor = null;
+        var vm = _items.FirstOrDefault(v => v.Dragging);
+        if (vm == null) return;
+        vm.Dragging = false;
+        int now = _items.IndexOf(vm);
+        if (!commit) { if (now != _dragFrom && _dragFrom >= 0 && _dragFrom < _items.Count) _items.Move(now, _dragFrom); ItemList.SelectedItem = vm; return; }
+        if (now == _dragFrom) return;
+        SaveOrder(vm, now);
+    }
+
+    void SaveOrder(ItemVm vm, int index)
+    {
+        long? above = index > 0 ? _items[index - 1].Item.Id : null;
+        long? below = index < _items.Count - 1 ? _items[index + 1].Item.Id : null;
+        _muteStoreChange = true;
+        try { Store.Reorder(vm.Item.Id, above, below, CurrentCard is { IsPinned: true }); }
+        finally { _muteStoreChange = false; }
+        ItemList.SelectedItem = vm;
+    }
+
+    /// <summary>Self-test: the same path as a mouse drag from one position to another.</summary>
+    internal void MoveItemForTest(int from, int to)
+    {
+        var vm = _items[from];
+        _dragActive = true; _dragFrom = from; vm.Dragging = true;
+        _items.Move(from, to);
+        EndDrag(commit: true);
     }
 
     // ───────────── event handlers ─────────────
@@ -818,6 +1066,225 @@ public partial class PanelWindow : Window
 
     void EditText(string msg) { EmptyText.Text = msg; EmptyState.Visibility = Visibility.Visible; }
 
+    // ───────────── preview (issue #10) ─────────────
+
+    internal bool PreviewOpen => PreviewOverlay.Visibility == Visibility.Visible;
+    /// <summary>Image zoom; null = fit the viewport (never upscaled).</summary>
+    double? _zoom;
+    internal string PreviewMode { get; private set; } = "";
+
+    static readonly HashSet<string> ImageExt = new(StringComparer.OrdinalIgnoreCase)
+        { ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".ico", ".webp" };
+    static readonly HashSet<string> TextExt = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".txt", ".md", ".markdown", ".json", ".log", ".csv", ".tsv", ".xml", ".yaml", ".yml", ".ini", ".cfg", ".conf", ".toml",
+        ".html", ".htm", ".css", ".js", ".ts", ".jsx", ".tsx", ".cs", ".py", ".java", ".c", ".h", ".cpp", ".go", ".rs", ".sql",
+        ".sh", ".ps1", ".bat", ".cmd", ".srt", ".properties", ".gitignore",
+    };
+    const long MaxPreviewText = 2 * 1024 * 1024;
+
+    void Preview_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: ItemVm vm }) { ItemList.SelectedItem = vm; OpenPreview(vm); }
+        e.Handled = true;
+    }
+
+    internal void OpenPreview(ItemVm vm)
+    {
+        CalOpen = false;
+        var item = vm.Item;
+        PreviewTitle.Text = item.Kind switch { ClipKind.Image => "图片", ClipKind.Files => vm.FilesTitle, _ => "文本" };
+        PreviewInfo.Text = vm.Meta;
+        switch (item.Kind)
+        {
+            case ClipKind.Image:
+                var path = item.ImagePath == null ? null : System.IO.Path.Combine(Settings.DataDir, item.ImagePath);
+                if (!ShowPreviewImage(path)) ShowPreviewMessage("图片文件已不存在，无法预览");
+                break;
+            case ClipKind.Files:
+                PreviewFiles(item.Paths);
+                break;
+            default:
+                ShowPreviewText(item.Text ?? "");
+                int len = (item.Text ?? "").Length; // the meta line already shows the length past 300
+                PreviewInfo.Text = $"{vm.Meta}{(len > 300 ? "" : $"  ·  {len} 字")}  ·  {LineCount(item.Text)} 行";
+                break;
+        }
+        PreviewOverlay.Visibility = Visibility.Visible;
+        if (PreviewMode == "text") { PreviewText.Focus(); Keyboard.Focus(PreviewText); PreviewText.CaretIndex = 0; PreviewText.ScrollToHome(); }
+        else FocusPanelInput();
+    }
+
+    static int LineCount(string? s) => string.IsNullOrEmpty(s) ? 0 : s.Count(c => c == '\n') + (s.EndsWith('\n') ? 0 : 1);
+
+    void PreviewFiles(string[] paths)
+    {
+        if (paths.Length == 1)
+        {
+            var p = paths[0];
+            if (!System.IO.File.Exists(p) && !System.IO.Directory.Exists(p)) { ShowPreviewMessage($"文件已被移动或删除：\n{p}"); return; }
+            var ext = System.IO.Path.GetExtension(p);
+            if (System.IO.File.Exists(p) && ImageExt.Contains(ext))
+            {
+                if (!ShowPreviewImage(p)) ShowPreviewMessage($"无法读取这张图片：\n{p}");
+                return;
+            }
+            if (System.IO.File.Exists(p) && TextExt.Contains(ext))
+            {
+                try
+                {
+                    var info = new System.IO.FileInfo(p);
+                    if (info.Length > MaxPreviewText) { ShowPreviewMessage($"文件太大（{info.Length / 1048576.0:0.#} MB），只预览 2 MB 以内的文本文件"); return; }
+                    var text = ReadTextFile(p);
+                    ShowPreviewText(text);
+                    PreviewInfo.Text = $"{p}  ·  {LineCount(text)} 行";
+                }
+                catch (Exception ex) { ShowPreviewMessage($"无法读取这个文件：{ex.Message}"); }
+                return;
+            }
+        }
+        // anything else: list the entries with their state
+        var sb = new System.Text.StringBuilder();
+        foreach (var p in paths)
+        {
+            bool dir = System.IO.Directory.Exists(p), file = System.IO.File.Exists(p);
+            string state = dir ? "文件夹" : file ? FormatSize(new System.IO.FileInfo(p).Length) : "已不存在";
+            sb.Append(p).Append("    (").Append(state).Append(")\n");
+        }
+        ShowPreviewText(sb.ToString().TrimEnd());
+        PreviewInfo.Text = $"{paths.Length} 项 · 这类文件不能直接预览，下面是路径";
+    }
+
+    static string FormatSize(long n) => n < 1024 ? $"{n} B" : n < 1048576 ? $"{n / 1024.0:0.#} KB" : $"{n / 1048576.0:0.#} MB";
+
+    /// <summary>UTF-8 (with or without BOM) / UTF-16 by BOM; text that isn't valid UTF-8 is read as GBK.</summary>
+    internal static string ReadTextFile(string path)
+    {
+        var bytes = System.IO.File.ReadAllBytes(path);
+        if (bytes.Length >= 2 && (bytes[0] == 0xFF && bytes[1] == 0xFE || bytes[0] == 0xFE && bytes[1] == 0xFF))
+            return new System.IO.StreamReader(new System.IO.MemoryStream(bytes), true).ReadToEnd();
+        try
+        {
+            var s = new System.Text.UTF8Encoding(false, true).GetString(bytes);
+            return s.Length > 0 && s[0] == '﻿' ? s[1..] : s;
+        }
+        catch (System.Text.DecoderFallbackException)
+        {
+            System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+            return System.Text.Encoding.GetEncoding(936).GetString(bytes);
+        }
+    }
+
+    void SetPreviewMode(string mode)
+    {
+        PreviewMode = mode;
+        PreviewImageScroller.Visibility = mode == "image" ? Visibility.Visible : Visibility.Collapsed;
+        PreviewText.Visibility = mode == "text" ? Visibility.Visible : Visibility.Collapsed;
+        PreviewMessage.Visibility = mode == "message" ? Visibility.Visible : Visibility.Collapsed;
+        PreviewZoomIn.Visibility = PreviewZoomOut.Visibility = PreviewZoomText.Visibility =
+            mode == "image" ? Visibility.Visible : Visibility.Collapsed;
+        if (mode != "image") PreviewImage.Source = null; // let a large bitmap go
+        if (mode != "text") PreviewText.Clear();
+    }
+
+    void ShowPreviewText(string text) { SetPreviewMode("text"); PreviewText.Text = text; }
+    void ShowPreviewMessage(string msg) { SetPreviewMode("message"); PreviewMessage.Text = msg; }
+
+    bool ShowPreviewImage(string? path)
+    {
+        if (path == null || !System.IO.File.Exists(path)) return false;
+        try
+        {
+            var b = new System.Windows.Media.Imaging.BitmapImage();
+            b.BeginInit();
+            b.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            b.CreateOptions = System.Windows.Media.Imaging.BitmapCreateOptions.IgnoreColorProfile;
+            b.UriSource = new Uri(path);
+            b.EndInit();
+            b.Freeze();
+            SetPreviewMode("image");
+            PreviewImage.Source = b;
+            // show pixels 1:1 in physical pixels at 100% (the bitmap's DPI must not shrink or grow it)
+            PreviewImage.Width = b.PixelWidth / DpiScale;
+            PreviewImage.Height = b.PixelHeight / DpiScale;
+            _zoom = null;
+            ApplyZoom();
+            return true;
+        }
+        catch { return false; }
+    }
+
+    double DpiScale => VisualTreeHelper.GetDpi(this).DpiScaleX;
+
+    double FitZoom
+    {
+        get
+        {
+            if (PreviewImage.Source == null) return 1;
+            double vw = Math.Max(1, PreviewImageScroller.ActualWidth - 4), vh = Math.Max(1, PreviewImageScroller.ActualHeight - 4);
+            if (PreviewImageScroller.ActualWidth <= 0) { vw = Math.Max(1, _wDip - 60); vh = Math.Max(1, _hDip - 120); }
+            return Math.Min(1, Math.Min(vw / PreviewImage.Width, vh / PreviewImage.Height));
+        }
+    }
+
+    internal double CurrentZoom => _zoom ?? FitZoom;
+
+    void ApplyZoom()
+    {
+        double z = CurrentZoom;
+        PreviewScale.ScaleX = PreviewScale.ScaleY = z;
+        PreviewZoomText.Content = _zoom == null ? "适应" : $"{Math.Round(z * 100)}%";
+    }
+
+    void Zoom(double factor)
+    {
+        _zoom = Math.Clamp(CurrentZoom * factor, 0.05, 8);
+        ApplyZoom();
+    }
+
+    void ToggleZoom() { _zoom = _zoom == null ? 1 : null; ApplyZoom(); }
+
+    void PreviewZoomIn_Click(object sender, RoutedEventArgs e) => Zoom(1.25);
+    void PreviewZoomOut_Click(object sender, RoutedEventArgs e) => Zoom(0.8);
+    void PreviewZoomToggle_Click(object sender, RoutedEventArgs e) => ToggleZoom();
+    void PreviewImage_Click(object sender, MouseButtonEventArgs e) { if (e.ClickCount == 2) { ToggleZoom(); e.Handled = true; } }
+    void PreviewScroller_SizeChanged(object sender, SizeChangedEventArgs e) { if (_zoom == null) ApplyZoom(); }
+
+    void PreviewImage_Wheel(object sender, MouseWheelEventArgs e)
+    {
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return; // plain wheel scrolls
+        Zoom(e.Delta > 0 ? 1.15 : 1 / 1.15);
+        e.Handled = true;
+    }
+
+    void PreviewBackdrop_Click(object sender, MouseButtonEventArgs e) { ClosePreview(); e.Handled = true; }
+    void PreviewClose_Click(object sender, RoutedEventArgs e) => ClosePreview();
+
+    internal void ClosePreview()
+    {
+        if (!PreviewOpen) return;
+        PreviewOverlay.Visibility = Visibility.Collapsed;
+        SetPreviewMode("");
+        if (Selected is { } s) ItemList.ScrollIntoView(s); // back where the user was
+        FocusPanelInput();
+    }
+
+    /// <summary>Esc / Space close. Image: + − 0 zoom. Everything else goes to the read-only text (select, Ctrl+C, scroll).</summary>
+    bool HandlePreviewKey(Key key, bool ctrl)
+    {
+        switch (key)
+        {
+            case Key.Escape: ClosePreview(); return true;
+            case Key.Space: ClosePreview(); return true; // like Quick Look: Space opens and closes
+            case Key.OemPlus or Key.Add when PreviewMode == "image": Zoom(1.25); return true;
+            case Key.OemMinus or Key.Subtract when PreviewMode == "image": Zoom(0.8); return true;
+            case Key.D0 or Key.NumPad0 when PreviewMode == "image": ToggleZoom(); return true;
+            case Key.Enter or Key.Delete or Key.F2: return true; // never paste/delete/edit underneath
+            case Key.P or Key.F when ctrl: return true;
+            default: return false;
+        }
+    }
+
     void EditCancel_Click(object sender, RoutedEventArgs e) => CloseEditor();
     void EditSave_Click(object sender, RoutedEventArgs e) => SaveEditor();
 
@@ -825,7 +1292,8 @@ public partial class PanelWindow : Window
     {
         var basis = CurrentCard is { IsPinned: false } c ? c.Date : DateOnly.FromDateTime(DateTime.Now);
         _calMonth = new DateOnly(basis.Year, basis.Month, 1);
-        if (CalOpen) { CalOpen = false; return; }
+        _calCursor = basis;
+        if (CalOpen) { CalOpen = false; FocusPanelInput(); return; }
         // Keep the calendar anchored below the date strip in both search states.
         var anchorBtn = sender as FrameworkElement is { IsVisible: true } fe ? fe : (Compact ? CompactCalButton : CalButton);
         double top = anchorBtn.TranslatePoint(new Point(0, anchorBtn.ActualHeight), CalOverlay).Y + 6;
@@ -835,6 +1303,62 @@ public partial class PanelWindow : Window
     }
 
     void CalBackdrop_Click(object sender, MouseButtonEventArgs e) { CalOpen = false; e.Handled = true; }
+
+    /// <summary>Keyboard cursor inside the open calendar (issue #12).</summary>
+    DateOnly _calCursor;
+    internal DateOnly CalCursor => _calCursor;
+    internal DateOnly CalMonth => _calMonth;
+    internal bool CalOpenForTest => CalOpen;
+    internal DayCard? CurrentCardForTest => CurrentCard;
+
+    /// <summary>
+    /// Issue #12: while the calendar is open, keys drive the calendar and never the list underneath.
+    /// ←→ ±1 day, ↑↓ ±1 week, PgUp/PgDn ±1 month, Home = today, Enter opens the day (if it has records), Esc closes.
+    /// </summary>
+    bool HandleCalendarKey(Key key, bool ctrl)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        int step = key switch
+        {
+            Key.Left => -1, Key.Right => 1, Key.Up => -7, Key.Down => 7, _ => 0,
+        };
+        if (step != 0) MoveCalCursor(_calCursor.AddDays(step));
+        else switch (key)
+        {
+            case Key.PageUp: MoveCalCursor(_calCursor.AddMonths(-1)); break;
+            case Key.PageDown: MoveCalCursor(_calCursor.AddMonths(1)); break;
+            case Key.Home: MoveCalCursor(today); break;
+            case Key.Escape: CalOpen = false; FocusPanelInput(); break;
+            case Key.Enter or Key.Space:
+                if (_counts.GetValueOrDefault(_calCursor) > 0 || _calCursor == today) PickCalendarDay(_calCursor);
+                break;
+            case Key.F when ctrl: CalOpen = false; SetSearchOpen(true); break;
+            case Key.Tab: break;
+            default:
+                // plain typing and other shortcuts must not reach the list under the calendar
+                return key is not (Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.System);
+        }
+        return true;
+    }
+
+    void MoveCalCursor(DateOnly d)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        var earliest = _counts.Count > 0 && _counts.Keys.First() < today ? _counts.Keys.First() : today;
+        if (d > today) d = today;
+        if (d < earliest) d = earliest;
+        _calCursor = d;
+        _calMonth = new DateOnly(d.Year, d.Month, 1);
+        BuildCalendar();
+    }
+
+    void PickCalendarDay(DateOnly date)
+    {
+        CalOpen = false;
+        var card = _cards.FirstOrDefault(x => !x.IsPinned && x.Date == date);
+        if (card != null) { DayList.SelectedItem = card; DayList.ScrollIntoView(card); }
+        FocusPanelInput();
+    }
 
     void CalPrev_Click(object sender, RoutedEventArgs e) { _calMonth = _calMonth.AddMonths(-1); BuildCalendar(); }
     void CalNext_Click(object sender, RoutedEventArgs e) { _calMonth = _calMonth.AddMonths(1); BuildCalendar(); }
@@ -870,15 +1394,12 @@ public partial class PanelWindow : Window
                 ToolTip = n > 0 ? $"{date.Month}月{date.Day}日 · {n} 条" : null,
             };
             ToolTipService.SetShowOnDisabled(btn, false);
+            // keyboard position: a ring (today keeps its accent ring)
             if (date == today) btn.SetResourceReference(BorderBrushProperty, "Accent");
+            else if (date == _calCursor) btn.SetResourceReference(BorderBrushProperty, "SubFg");
             if (date == selected) btn.SetResourceReference(BackgroundProperty, "SelBg");
-            btn.Click += (_, _) =>
-            {
-                CalOpen = false;
-                var card = _cards.FirstOrDefault(x => !x.IsPinned && x.Date == date);
-                if (card != null) { DayList.SelectedItem = card; DayList.ScrollIntoView(card); }
-                FocusPanelInput();
-            };
+            else if (date == _calCursor) btn.SetResourceReference(BackgroundProperty, "Track");
+            btn.Click += (_, _) => PickCalendarDay(date);
             CalGrid.Children.Add(btn);
         }
         {

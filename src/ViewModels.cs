@@ -109,7 +109,11 @@ public sealed class ItemVm : Bindable
         get => Item.Pinned;
         set { Item.Pinned = value; Raise(); Raise(nameof(PinGlyph)); }
     }
-    public string PinGlyph => Item.Pinned ? "" : ""; // Unpin / Pin
+    bool _dragging;
+    /// <summary>Issue #13: this card is being dragged to a new position.</summary>
+    public bool Dragging { get => _dragging; set { _dragging = value; Raise(); } }
+
+    public string PinGlyph =>Item.Pinned ? "" : ""; // Unpin / Pin
 
     string? _preview;
     public string Preview => _preview ??= MakePreview(Item.Text);

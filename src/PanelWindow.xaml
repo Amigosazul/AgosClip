@@ -81,14 +81,17 @@
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="{Binding Meta}" FontSize="11" Foreground="{DynamicResource SubFg}"
                                                VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                    <Button x:Name="editBtn" Grid.Column="1" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
+                                    <Button x:Name="viewBtn" Grid.Column="1" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
+                                            Content="&#xE890;" ToolTip="预览 (空格)" Click="Preview_Click" Visibility="Hidden"/>
+                                    <Button x:Name="editBtn" Grid.Column="2" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
                                             Content="&#xE70F;" ToolTip="编辑 (F2)" Click="Edit_Click" Visibility="Hidden"/>
-                                    <Button x:Name="pinBtn" Grid.Column="2" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
+                                    <Button x:Name="pinBtn" Grid.Column="3" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
                                             Content="{Binding PinGlyph}" ToolTip="固定 / 取消固定 (Ctrl+P)" Click="Pin_Click" Visibility="Hidden"/>
-                                    <Button x:Name="delBtn" Grid.Column="3" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
+                                    <Button x:Name="delBtn" Grid.Column="4" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
                                             Content="&#xE74D;" ToolTip="删除 (Del)" Click="Delete_Click" Visibility="Hidden"/>
                                 </Grid>
                             </Grid>
@@ -103,6 +106,7 @@
                                 <Setter TargetName="pinBtn" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="delBtn" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="editBtn" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="viewBtn" Property="Visibility" Value="Visible"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="b" Property="Background" Value="{DynamicResource SelBg}"/>
@@ -110,10 +114,16 @@
                                 <Setter TargetName="pinBtn" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="delBtn" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="editBtn" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="viewBtn" Property="Visibility" Value="Visible"/>
                             </Trigger>
                             <!-- only text can be edited (declared last so it wins over hover/selected) -->
                             <DataTrigger Binding="{Binding IsText}" Value="False">
                                 <Setter TargetName="editBtn" Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                            <!-- issue #13: the card being dragged -->
+                            <DataTrigger Binding="{Binding Dragging}" Value="True">
+                                <Setter TargetName="b" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+                                <Setter TargetName="b" Property="Opacity" Value="0.8"/>
                             </DataTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -159,6 +169,21 @@
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
+
+        <Style x:Key="ResizeThumb" TargetType="Thumb">
+            <Setter Property="Focusable" Value="False"/>
+            <EventSetter Event="DragStarted" Handler="Resize_DragStarted"/>
+            <EventSetter Event="DragDelta" Handler="Resize_DragDelta"/>
+            <EventSetter Event="DragCompleted" Handler="Resize_DragCompleted"/>
+            <EventSetter Event="MouseDoubleClick" Handler="Resize_DoubleClick"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border Background="Transparent"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
         <Style x:Key="CalDay" TargetType="Button">
             <Setter Property="Foreground" Value="{DynamicResource Fg}"/>
@@ -285,11 +310,11 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <Button x:Name="DayOlder" Style="{StaticResource IconButton}" Width="26" Height="26" FontSize="10" Content="&#xE76B;"
-                            ToolTip="前一天 (→)" Click="DayOlder_Click" Visibility="Collapsed" Margin="0,0,2,0"/>
+                            ToolTip="前一天 (←)" Click="DayOlder_Click" Visibility="Collapsed" Margin="0,0,2,0"/>
                     <TextBlock x:Name="SectionTitle" Grid.Column="1" Margin="4,0,2,0" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center"
                                Foreground="{DynamicResource SubFg}" TextTrimming="CharacterEllipsis"/>
                     <Button x:Name="DayNewer" Grid.Column="2" Style="{StaticResource IconButton}" Width="26" Height="26" FontSize="10" Content="&#xE76C;"
-                            ToolTip="后一天 (←)" Click="DayNewer_Click" Visibility="Collapsed"/>
+                            ToolTip="后一天 (→)" Click="DayNewer_Click" Visibility="Collapsed"/>
                     <Button x:Name="CompactCalButton" Grid.Column="3" Style="{StaticResource IconButton}" Content="&#xE787;" FontSize="14"
                             Width="30" Height="26" ToolTip="按日历选择日期 / 固定的条目" Click="Cal_Click" Visibility="Collapsed"/>
                 </Grid>
@@ -408,8 +433,77 @@
                         </Grid>
                     </Border>
                 </Grid>
+
+                <!-- Preview an item (issue #10): never touches the clipboard -->
+                <Grid x:Name="PreviewOverlay" Grid.RowSpan="6" Margin="-14,-10" Visibility="Collapsed">
+                    <Rectangle Fill="{DynamicResource Dim}" RadiusX="8" RadiusY="8" MouseLeftButtonDown="PreviewBackdrop_Click"/>
+                    <Border Margin="8,40,8,8" Background="{DynamicResource OverlayBg}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1"
+                            CornerRadius="12" Padding="10,8,10,10">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="24" ShadowDepth="6" Direction="270" Opacity="0.22" Color="Black"/>
+                        </Border.Effect>
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition/>
+                            </Grid.RowDefinitions>
+                            <Grid Margin="2,0,-2,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock x:Name="PreviewTitle" Text="预览" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock x:Name="PreviewInfo" FontSize="11" Foreground="{DynamicResource SubFg}" TextTrimming="CharacterEllipsis" Margin="0,1,0,0"/>
+                                </StackPanel>
+                                <Button x:Name="PreviewZoomOut" Grid.Column="1" Style="{StaticResource IconButton}" Content="&#xE71F;" FontSize="12"
+                                        ToolTip="缩小 (-)" Click="PreviewZoomOut_Click"/>
+                                <Button x:Name="PreviewZoomText" Grid.Column="2" Style="{StaticResource IconButton}" Width="48" FontSize="11.5"
+                                        FontFamily="{StaticResource UiFont}" Content="适应" ToolTip="在适应窗口和 100% 之间切换 (0)" Click="PreviewZoomToggle_Click"/>
+                                <Button x:Name="PreviewZoomIn" Grid.Column="3" Style="{StaticResource IconButton}" Content="&#xE8A3;" FontSize="12"
+                                        ToolTip="放大 (+)，也可以 Ctrl + 滚轮" Click="PreviewZoomIn_Click"/>
+                                <Button Grid.Column="4" Style="{StaticResource IconButton}" Content="&#xE711;" FontSize="12"
+                                        ToolTip="关闭 (Esc)" Click="PreviewClose_Click"/>
+                            </Grid>
+                            <Border Grid.Row="1" CornerRadius="8" Background="{DynamicResource CardBg}" BorderBrush="{DynamicResource CardBorder}"
+                                    BorderThickness="1" ClipToBounds="True">
+                                <Grid>
+                                    <ScrollViewer x:Name="PreviewImageScroller" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                                  Visibility="Collapsed" PreviewMouseWheel="PreviewImage_Wheel" SizeChanged="PreviewScroller_SizeChanged">
+                                        <Image x:Name="PreviewImage" Stretch="None" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               RenderOptions.BitmapScalingMode="HighQuality" MouseLeftButtonDown="PreviewImage_Click">
+                                            <Image.LayoutTransform>
+                                                <ScaleTransform x:Name="PreviewScale"/>
+                                            </Image.LayoutTransform>
+                                        </Image>
+                                    </ScrollViewer>
+                                    <TextBox x:Name="PreviewText" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent"
+                                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="8,6"
+                                             FontFamily="Cascadia Mono, Consolas, Microsoft YaHei UI" FontSize="12.5"
+                                             Foreground="{DynamicResource Fg}" SelectionBrush="{DynamicResource Accent}"
+                                             Visibility="Collapsed" IsUndoEnabled="False"/>
+                                    <TextBlock x:Name="PreviewMessage" Margin="20" TextAlignment="Center" TextWrapping="Wrap"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource SubFg}" Visibility="Collapsed"/>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </Border>
+                </Grid>
             </Grid>
         </Grid>
     </Border>
+
+    <!-- Resize handles (issue #11): edges and corners; double-click restores the default size -->
+    <Thumb Tag="L" Style="{StaticResource ResizeThumb}" Width="5" HorizontalAlignment="Left" Margin="0,10" Cursor="SizeWE"/>
+    <Thumb Tag="R" Style="{StaticResource ResizeThumb}" Width="5" HorizontalAlignment="Right" Margin="0,10" Cursor="SizeWE"/>
+    <Thumb Tag="T" Style="{StaticResource ResizeThumb}" Height="4" VerticalAlignment="Top" Margin="10,0" Cursor="SizeNS"/>
+    <Thumb Tag="B" Style="{StaticResource ResizeThumb}" Height="5" VerticalAlignment="Bottom" Margin="10,0" Cursor="SizeNS"/>
+    <Thumb Tag="TL" Style="{StaticResource ResizeThumb}" Width="10" Height="10" HorizontalAlignment="Left" VerticalAlignment="Top" Cursor="SizeNWSE"/>
+    <Thumb Tag="TR" Style="{StaticResource ResizeThumb}" Width="10" Height="10" HorizontalAlignment="Right" VerticalAlignment="Top" Cursor="SizeNESW"/>
+    <Thumb Tag="BL" Style="{StaticResource ResizeThumb}" Width="10" Height="10" HorizontalAlignment="Left" VerticalAlignment="Bottom" Cursor="SizeNESW"/>
+    <Thumb Tag="BR" Style="{StaticResource ResizeThumb}" Width="12" Height="12" HorizontalAlignment="Right" VerticalAlignment="Bottom" Cursor="SizeNWSE"/>
     </Grid>
 </Window>

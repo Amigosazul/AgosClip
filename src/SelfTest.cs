@@ -71,6 +71,7 @@ internal static class SelfTest
                 MoveTests(app);
                 FeedbackTests(app);
                 IssueTests(app);
+                Issue8To13Tests(app, outDir);
                 PasteContentionTest(app);
             }
             Seed(app);
@@ -971,8 +972,11 @@ internal static class SelfTest
         Pump(200);
         Check(panel.DayList.SelectedIndex == before + 1 && panel.SectionTitle.Text.StartsWith("昨天 · "),
             $"‹ goes to the previous day ({panel.SectionTitle.Text})");
-        Check(panel.HandleKey(System.Windows.Input.Key.Left, System.Windows.Input.ModifierKeys.None) && panel.DayList.SelectedIndex == before,
-            "← / → still switch days in compact mode");
+        Check(panel.HandleKey(System.Windows.Input.Key.Right, System.Windows.Input.ModifierKeys.None) && panel.DayList.SelectedIndex == before,
+            "→ goes back to the newer day in compact mode (same direction as ›)");
+        Check(panel.HandleKey(System.Windows.Input.Key.Left, System.Windows.Input.ModifierKeys.None) && panel.DayList.SelectedIndex == before + 1,
+            "← goes to the older day in compact mode (same direction as ‹) — issue #12");
+        panel.HandleKey(System.Windows.Input.Key.Right, System.Windows.Input.ModifierKeys.None);
         app.Settings.ShowDateCards = true;
         panel.PrepareSnapshot(-1);
         Pump(150);
@@ -999,6 +1003,246 @@ internal static class SelfTest
         }
         else Check(false, "editor test: no text item in the list");
         panel.Close();
+    }
+
+    /// <summary>Issues #9–#13: Markdown notes, preview, resize, date keys / calendar keyboard, drag to reorder.</summary>
+    static void Issue8To13Tests(App app, string outDir)
+    {
+        var s = app.Store;
+        var none = System.Windows.Input.ModifierKeys.None;
+
+        // ── #13 store: hand-arranged order ──
+        var day5 = Today.AddDays(-5);
+        foreach (var (t, h) in new[] { ("排序A", 9), ("排序B", 10), ("排序C", 11) })
+            s.Upsert(ClipKind.Text, Store.TextHash(t), t, null, null, 0, 0, null, At(5, h, 0));
+        string Order(List<ClipItem> l) => string.Join("", l.Where(i => i.Text?.StartsWith("排序") == true).Select(i => i.Text![2..]));
+        long Id(string t) => s.Search(t)[0].Id;
+        Check(Order(s.ItemsOnDay(day5)) == "CBA", "a day lists newest first by default");
+        s.Reorder(Id("排序A"), null, Id("排序C"), false);
+        Check(Order(s.ItemsOnDay(day5)) == "ACB", $"dragging to the top saves ({Order(s.ItemsOnDay(day5))})");
+        s.Reorder(Id("排序B"), Id("排序A"), Id("排序C"), false);
+        Check(Order(s.ItemsOnDay(day5)) == "ABC", $"dragging between two cards saves ({Order(s.ItemsOnDay(day5))})");
+        foreach (var t in new[] { "排序A", "排序B", "排序C" }) s.SetPinned(Id(t), true);
+        var firstPinned = s.PinnedItems()[0];
+        s.Reorder(Id("排序C"), null, firstPinned.Id, true);
+        Check(s.PinnedItems()[0].Text == "排序C" && Order(s.ItemsOnDay(day5)) == "ABC",
+            "the 固定 list has its own order; arranging it leaves the day untouched");
+        s.Upsert(ClipKind.Text, Store.TextHash("排序B"), "排序B", null, null, 0, 0, null, At(5, 11, 30));
+        Check(Order(s.ItemsOnDay(day5)) == "BAC", $"copying an item again brings it back to the top ({Order(s.ItemsOnDay(day5))})");
+        foreach (var t in new[] { "排序A", "排序B", "排序C" }) s.SetPinned(Id(t), false);
+
+        var day6 = Today.AddDays(-6);
+        foreach (var (t, h) in new[] { ("精度Q", 9), ("精度Y", 10), ("精度X", 11), ("精度P", 12) })
+            s.Upsert(ClipKind.Text, Store.TextHash(t), t, null, null, 0, 0, null, At(6, h, 0));
+        long p = Id("精度P"), x = Id("精度X"), y = Id("精度Y");
+        for (int i = 0; i < 70; i++)
+        {
+            bool moveX = i % 2 == 0;
+            s.Reorder(moveX ? x : y, p, moveX ? y : x, false); // always straight under P: halves the gap each time
+        }
+        var d6 = string.Join("", s.ItemsOnDay(day6).Select(i => i.Text![2..]));
+        Check(d6 == "PYXQ", $"70 inserts into the same gap keep the order (keys renumbered when needed: {d6})");
+
+        // ── #13 panel: drag in the list ──
+        app.Settings.ShowDateCards = true;
+        var panel = new PanelWindow();
+        panel.PrepareSnapshot(-1);
+        int idx5 = panel.DayList.Items.OfType<DayCard>().ToList().FindIndex(c => !c.IsPinned && c.Date == day5);
+        panel.DayList.SelectedIndex = idx5;
+        Pump(150);
+        string ListOrder() => string.Join("", panel.ItemList.Items.OfType<ItemVm>().Select(v => v.Item.Text![2..]));
+        Check(ListOrder() == "BAC", $"panel shows the saved order ({ListOrder()})");
+        panel.MoveItemForTest(2, 0);
+        Check(ListOrder() == "CBA" && Order(s.ItemsOnDay(day5)) == "CBA", $"dragging a card in the panel saves the new order ({Order(s.ItemsOnDay(day5))})");
+        panel.MoveItemForTest(0, 1);
+        Check(Order(s.ItemsOnDay(day5)) == "BCA", "dragging down one place saves");
+
+        // ── #12 date-strip mode keeps ← = card on the left ──
+        int cardIdx = panel.DayList.SelectedIndex;
+        panel.HandleKey(System.Windows.Input.Key.Left, none);
+        Check(panel.DayList.SelectedIndex == cardIdx - 1, "date strip: ← selects the card on the left (newer)");
+        panel.Close();
+
+        // ── #12 compact mode ──
+        app.Settings.ShowDateCards = false;
+        panel = new PanelWindow();
+        panel.PrepareSnapshot(-1);
+        Pump(150);
+        bool hasPinned = panel.DayList.Items.OfType<DayCard>().Any(c => c.IsPinned);
+        Check(panel.CurrentCardForTest is { IsPinned: false } t0 && t0.Date == Today && !panel.DayNewer.IsEnabled && panel.DayOlder.IsEnabled,
+            "compact: on today › is disabled (固定 is not a day), ‹ is enabled");
+        Check(panel.HandleKey(System.Windows.Input.Key.Right, none) && panel.CurrentCardForTest is { IsPinned: false } t1 && t1.Date == Today,
+            "compact: → on today stays on today");
+        if (hasPinned)
+        {
+            panel.DayList.SelectedItem = panel.DayList.Items.OfType<DayCard>().First(c => c.IsPinned);
+            Pump(80);
+            Check(panel.DayOlder.IsEnabled && !panel.DayNewer.IsEnabled, "compact: from 固定, ‹ goes back to the days");
+            panel.HandleKey(System.Windows.Input.Key.Left, none);
+            Check(panel.CurrentCardForTest is { IsPinned: false } t2 && t2.Date == Today, "compact: ← from 固定 returns to today");
+        }
+        else Check(false, "compact: expected a 固定 card");
+
+        // ── #12 calendar takes the keyboard ── (earlier tests clear the store: give ↑ a week to go back into)
+        s.Upsert(ClipKind.Text, Store.TextHash("十二天前"), "十二天前", null, null, 0, 0, null, At(12, 9, 0));
+        panel.PrepareSnapshot(-1, null, openCalendar: true);
+        Pump(100);
+        int itemSel = panel.ItemList.SelectedIndex, itemCount = panel.ItemList.Items.Count;
+        var dayBefore = panel.CurrentCardForTest;
+        Check(panel.HandleKey(System.Windows.Input.Key.Down, none) && panel.ItemList.SelectedIndex == itemSel && panel.CalCursor == Today,
+            "calendar: ↓ doesn't move the list underneath (and can't go past today)");
+        Check(panel.HandleKey(System.Windows.Input.Key.Left, none) && panel.CalCursor == Today.AddDays(-1) && panel.CurrentCardForTest == dayBefore,
+            "calendar: ← moves the calendar cursor, not the day underneath");
+        Check(panel.HandleKey(System.Windows.Input.Key.Delete, none) && panel.ItemList.Items.Count == itemCount,
+            "calendar: Delete doesn't delete the item underneath");
+        panel.HandleKey(System.Windows.Input.Key.Up, none);
+        Check(panel.CalCursor == Today.AddDays(-8) && panel.CalMonth == new DateOnly(Today.AddDays(-8).Year, Today.AddDays(-8).Month, 1),
+            $"calendar: ↑ goes back a week, and the month follows ({panel.CalCursor})");
+        panel.HandleKey(System.Windows.Input.Key.Home, none);
+        // find an empty day in the last 3 weeks to check Enter does nothing there
+        var counts = s.DayCounts();
+        var empty = Enumerable.Range(2, 20).Select(n => Today.AddDays(-n)).FirstOrDefault(d => counts.GetValueOrDefault(d) == 0);
+        if (empty != default)
+        {
+            while (panel.CalCursor > empty) panel.HandleKey(System.Windows.Input.Key.Left, none);
+            panel.HandleKey(System.Windows.Input.Key.Enter, none);
+            Check(panel.CalOpenForTest && panel.CurrentCardForTest == dayBefore, "calendar: Enter on a day without records does nothing");
+        }
+        panel.HandleKey(System.Windows.Input.Key.Home, none);
+        panel.HandleKey(System.Windows.Input.Key.Left, none);
+        panel.HandleKey(System.Windows.Input.Key.Enter, none);
+        Check(!panel.CalOpenForTest && panel.CurrentCardForTest is { IsPinned: false } y1 && y1.Date == Today.AddDays(-1),
+            "calendar: Enter opens the highlighted day and closes the calendar");
+        panel.PrepareSnapshot(-1, null, openCalendar: true);
+        panel.HandleKey(System.Windows.Input.Key.Escape, none);
+        Check(!panel.CalOpenForTest && panel.CurrentCardForTest is { IsPinned: false } t3 && t3.Date == Today, "calendar: Esc only closes the calendar");
+
+        // ── #10 preview ──
+        string longText = string.Join("\n", Enumerable.Range(1, 120).Select(n => $"第 {n} 行：日志 log line {n} " + new string('x', n % 30)));
+        s.Upsert(ClipKind.Text, Store.TextHash(longText), longText, null, null, 0, 0, "记事本");
+        _mon ??= new ClipboardMonitor(s, () => app.Settings);
+        var (ih, ir, it) = _mon.SaveImage(MakeImage(1800, 1000, "预览大图 1800×1000", Colors.MediumPurple, Colors.Orange));
+        s.Upsert(ClipKind.Image, ih, null, ir, it, 1800, 1000, "截图");
+        var missing = new[] { @"C:\definitely\missing\报告.docx" };
+        s.Upsert(ClipKind.Files, Store.FilesHash(missing), missing[0], null, null, 0, 0, "资源管理器");
+        var gbk = Path.Combine(outDir, "gbk-sample.txt");
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        File.WriteAllBytes(gbk, Encoding.GetEncoding(936).GetBytes("中文 GBK 文本\r\n第二行"));
+        s.Upsert(ClipKind.Files, Store.FilesHash(new[] { gbk }), gbk, null, null, 0, 0, "资源管理器");
+        _mon.Dispose(); _mon = null;
+        panel.PrepareSnapshot(-1);
+        Pump(150);
+        var vms = panel.ItemList.Items.OfType<ItemVm>().ToList();
+        var longVm = vms.First(v => v.Item.Text == longText);
+        panel.ItemList.SelectedItem = longVm;
+        string clipBefore = s.ItemsOnDay(Today).Count.ToString();
+        Check(panel.HandleKey(System.Windows.Input.Key.Space, none) && panel.PreviewOpen && panel.PreviewMode == "text"
+              && panel.PreviewText.Text == longText, "Space previews the complete text, line breaks kept");
+        Check(panel.HandleKey(System.Windows.Input.Key.Enter, none) && panel.PreviewOpen && panel.HandleKey(System.Windows.Input.Key.Delete, none)
+              && s.ItemsOnDay(Today).Count.ToString() == clipBefore, "Enter / Delete in the preview don't paste or delete");
+        panel.Show(); Pump(300);
+        RenderOnGlass((FrameworkElement)panel.Content, Path.Combine(outDir, "preview-text-light.png"), false, true);
+        panel.HandleKey(System.Windows.Input.Key.Escape, none);
+        Check(!panel.PreviewOpen && panel.ItemList.SelectedItem == longVm, "Esc closes the preview and keeps the list position");
+
+        var imgVm = vms.First(v => v.IsImage && v.Item.Width == 1800);
+        panel.OpenPreview(imgVm);
+        Pump(200);
+        double fit = panel.CurrentZoom;
+        Check(panel.PreviewMode == "image" && panel.PreviewImage.Source != null && fit < 1, $"image preview fits the panel (zoom {fit:0.00})");
+        RenderOnGlass((FrameworkElement)panel.Content, Path.Combine(outDir, "preview-image-light.png"), false, true);
+        panel.HandleKey(System.Windows.Input.Key.OemPlus, none);
+        Check(panel.CurrentZoom > fit, "+ zooms in");
+        panel.HandleKey(System.Windows.Input.Key.D0, none);
+        Check(Math.Abs(panel.CurrentZoom - 1) < 1e-6 || Math.Abs(panel.CurrentZoom - fit) < 1e-6, "0 toggles fit / 100%");
+        panel.HandleKey(System.Windows.Input.Key.Escape, none);
+
+        panel.OpenPreview(vms.First(v => v.IsFiles && v.Item.Text == missing[0]));
+        Check(panel.PreviewMode == "message" && panel.PreviewMessage.Text.Contains("已被移动或删除"), "a missing file says so");
+        panel.ClosePreview();
+        panel.OpenPreview(vms.First(v => v.IsFiles && v.Item.Text == gbk));
+        Check(panel.PreviewMode == "text" && panel.PreviewText.Text == "中文 GBK 文本\r\n第二行", "a GBK text file previews readably");
+        panel.ClosePreview();
+        panel.Hide();
+        panel.Close();
+
+        // ── #11 resize and remember ──
+        var rp = new PanelWindow();
+        rp.ShowFor(IntPtr.Zero);
+        Pump(350);
+        var (w0, h0) = rp.PhysicalSize;
+        rp.BeginResizeForTest();
+        rp.ResizeBy("BR", 120, 90);
+        Pump(120);
+        var (w1, h1) = rp.PhysicalSize;
+        Check(w1 == w0 + 120 && h1 == h0 + 90, $"dragging the corner resizes ({w0}×{h0} → {w1}×{h1})");
+        Check(Math.Abs(rp.Root.ActualHeight - rp.SizeDip.H) < 1.5 && Math.Abs(rp.Root.ActualWidth - rp.SizeDip.W) < 1.5,
+            $"content follows the new size ({rp.Root.ActualWidth:0}×{rp.Root.ActualHeight:0})");
+        RenderOnGlass((FrameworkElement)rp.Content, Path.Combine(outDir, "panel-resized-light.png"), false, true);
+        rp.ResizeBy("BR", -5000, -5000);
+        Check(Math.Abs(rp.SizeDip.W - PanelWindow.MinWDip) < 1 && Math.Abs(rp.SizeDip.H - PanelWindow.MinHDip) < 1, "there is a minimum size");
+        rp.ResizeBy("BR", 120, 90);
+        rp.EndResizeForTest();
+        double savedW = app.Settings.PanelWidth, savedH = app.Settings.PanelHeight;
+        Check(savedW > PanelWindow.DefaultW && savedH > PanelWindow.DefaultH && Settings.Load().PanelWidth == savedW, $"the size is saved ({savedW}×{savedH})");
+        rp.HidePanel(); Pump(300); rp.Close();
+        var rp2 = new PanelWindow();
+        Check(Math.Abs(rp2.SizeDip.W - savedW) < 0.5 && Math.Abs(rp2.SizeDip.H - savedH) < 0.5, "the next panel opens at the remembered size");
+        rp2.Close();
+        app.Settings.PanelWidth = app.Settings.PanelHeight = 0;
+        app.Settings.Save();
+
+        // ── #9 release notes as Markdown ──
+        const string notes = "## AgosClip 1.8.3\n\n**重要修复：粘贴时卡死约 10 秒**\n- 第一条，带 `open timing` 代码\n- 第二条 *强调* 和 [发布页](https://github.com/Amigosazul/AgosClip/releases)\n  续行\n  - 子项\n1. 有序\n2. 第二\n\n> 引用\n\n```\ncode block\n```\n---\n- https://ghfast.top/https://github.com/x/y.exe";
+        foreach (bool dark in new[] { false, true })
+        {
+            Theme.Apply(dark);
+            var host = new System.Windows.Controls.StackPanel();
+            MarkdownView.Render(host, notes);
+            var box = new System.Windows.Controls.Border { Width = 460, Padding = new Thickness(14), Child = host };
+            box.SetResourceReference(System.Windows.Controls.Border.BackgroundProperty, "PanelBg");
+            box.Measure(new Size(460, double.PositiveInfinity));
+            box.Arrange(new Rect(box.DesiredSize));
+            box.UpdateLayout();
+            Render(box, box.ActualWidth, box.ActualHeight, Path.Combine(outDir, $"notes-markdown-{(dark ? "dark" : "light")}.png"));
+            if (dark) continue;
+            var blocks = host.Children.OfType<FrameworkElement>().ToList();
+            var all = string.Join("\n", blocks.SelectMany(AllText));
+            Check(blocks[0] is System.Windows.Controls.TextBlock { FontWeight: var fw } hd && fw == FontWeights.SemiBold && new System.Windows.Documents.TextRange(hd.ContentStart, hd.ContentEnd).Text == "AgosClip 1.8.3",
+                "## becomes a heading");
+            Check(!all.Contains("**") && !all.Contains("##") && !all.Contains("](") && !all.Contains('`'), $"no raw Markdown marks remain");
+            Check(blocks.OfType<System.Windows.Controls.TextBlock>().Any(tb => tb.Inlines.OfType<System.Windows.Documents.Bold>().Any()), "**text** is bold");
+            int links = blocks.SelectMany(Inlines).OfType<System.Windows.Documents.Hyperlink>().Count();
+            Check(links == 2, $"links and bare URLs are clickable ({links})");
+            Check(blocks.Count(b => b is System.Windows.Controls.Grid) == 6, $"list items render as bullets ({blocks.Count(b => b is System.Windows.Controls.Grid)})");
+        }
+        Theme.Apply(false);
+    }
+
+    static IEnumerable<System.Windows.Documents.Inline> Inlines(FrameworkElement e)
+    {
+        IEnumerable<System.Windows.Documents.Inline> Walk(System.Windows.Documents.InlineCollection c)
+        {
+            foreach (var i in c)
+            {
+                yield return i;
+                if (i is System.Windows.Documents.Span sp) foreach (var j in Walk(sp.Inlines)) yield return j;
+            }
+        }
+        var tbs = e is System.Windows.Controls.TextBlock t ? new[] { t }
+            : e is System.Windows.Controls.Panel p ? p.Children.OfType<System.Windows.Controls.TextBlock>().ToArray()
+            : e is System.Windows.Controls.Border { Child: System.Windows.Controls.TextBlock bt } ? new[] { bt }
+            : Array.Empty<System.Windows.Controls.TextBlock>();
+        foreach (var tb in tbs) foreach (var i in Walk(tb.Inlines)) yield return i;
+    }
+
+    static IEnumerable<string> AllText(FrameworkElement e)
+    {
+        var tbs = e is System.Windows.Controls.TextBlock t ? new[] { t }
+            : e is System.Windows.Controls.Panel p ? p.Children.OfType<System.Windows.Controls.TextBlock>().ToArray()
+            : e is System.Windows.Controls.Border { Child: System.Windows.Controls.TextBlock bt } ? new[] { bt }
+            : Array.Empty<System.Windows.Controls.TextBlock>();
+        foreach (var tb in tbs) yield return new System.Windows.Documents.TextRange(tb.ContentStart, tb.ContentEnd).Text;
     }
 
     /// <summary>

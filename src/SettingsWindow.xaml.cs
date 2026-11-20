@@ -156,12 +156,13 @@ public partial class SettingsWindow : Window
         {
             UpdateStatus.Text = $"当前版本 {Updater.Current.ToString(3)}";
             InstallBtn.Visibility = Visibility.Collapsed;
-            UpdateNotes.Visibility = Visibility.Collapsed;
+            UpdateNotesBox.Visibility = Visibility.Collapsed;
             return;
         }
         UpdateStatus.Text = $"当前版本 {Updater.Current.ToString(3)}，发现新版本 {u.Version.ToString(3)}（{u.Size / 1048576.0:0.#} MB）";
-        UpdateNotes.Text = u.Notes;
-        UpdateNotes.Visibility = string.IsNullOrWhiteSpace(u.Notes) ? Visibility.Collapsed : Visibility.Visible;
+        MarkdownView.Render(UpdateNotes, u.Notes);
+        UpdateNotesScroll.ScrollToTop();
+        UpdateNotesBox.Visibility = string.IsNullOrWhiteSpace(u.Notes) ? Visibility.Collapsed : Visibility.Visible;
         InstallBtn.Content = $"下载并安装 {u.Version.ToString(3)}";
         InstallBtn.Visibility = Visibility.Visible;
     }

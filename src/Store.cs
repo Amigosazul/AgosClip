@@ -27,6 +27,9 @@ public sealed class ClipItem
     public bool Pinned { get; set; }
     /// <summary>Names of the extra formats stored with this item (e.g. "HTML Format").</summary>
     public IReadOnlyList<string> Formats { get; init; } = Array.Empty<string>();
+    /// <summary>Sort keys (issue #13): order within a day or search, and within the 固定 list.</summary>
+    public double DayKey { get; init; }
+    public double PinKey { get; init; }
     public string[] Paths => Kind == ClipKind.Files && Text != null
         ? Text.Split('\n', StringSplitOptions.RemoveEmptyEntries) : Array.Empty<string>();
 }
@@ -71,7 +74,21 @@ public sealed class Store : IDisposable
                  data BLOB NOT NULL,
                  is_text INTEGER NOT NULL DEFAULT 0,
                  PRIMARY KEY(item_id, format));");
+        // Issue #13: hand-arranged order. sort_at overrides created_at for ordering a day/search list;
+        // pin_sort orders the 固定 list on its own, so arranging one never shuffles the other.
+        var cols = new HashSet<string>();
+        using (var c = _db.CreateCommand())
+        {
+            c.CommandText = "PRAGMA table_info(items)";
+            using var r = c.ExecuteReader();
+            while (r.Read()) cols.Add(r.GetString(1));
+        }
+        if (!cols.Contains("sort_at")) Exec("ALTER TABLE items ADD COLUMN sort_at REAL");
+        if (!cols.Contains("pin_sort")) Exec("ALTER TABLE items ADD COLUMN pin_sort REAL");
     }
+
+    const string DayOrder = "COALESCE(sort_at, created_at)";
+    const string PinOrder = "COALESCE(pin_sort, sort_at, created_at)";
 
     /// <summary>Folds the WAL into history.db and closes it, so the file can be copied or moved.</summary>
     public void Close()
@@ -118,7 +135,7 @@ public sealed class Store : IDisposable
         using var c = _db.CreateCommand();
         c.CommandText = @"INSERT INTO items(kind,text,image_path,thumb_path,width,height,hash,source_app,first_at,created_at)
                           VALUES($k,$t,$i,$th,$w,$hh,$h,$s,$n,$n)
-                          ON CONFLICT(hash) DO UPDATE SET created_at=$n, copy_count=copy_count+1,
+                          ON CONFLICT(hash) DO UPDATE SET created_at=$n, copy_count=copy_count+1, sort_at=NULL,
                               source_app=COALESCE($s, source_app)";
         c.Parameters.AddWithValue("$k", (int)kind);
         c.Parameters.AddWithValue("$t", (object?)text ?? DBNull.Value);
@@ -224,7 +241,8 @@ public sealed class Store : IDisposable
     }
 
     const string Cols = "id,kind,text,image_path,thumb_path,width,height,source_app,created_at,copy_count,pinned," +
-                        "(SELECT group_concat(format, char(31)) FROM item_formats f WHERE f.item_id = items.id)";
+                        "(SELECT group_concat(format, char(31)) FROM item_formats f WHERE f.item_id = items.id)," +
+                        DayOrder + "," + PinOrder;
 
     static ClipItem Read(SqliteDataReader r) => new()
     {
@@ -240,12 +258,14 @@ public sealed class Store : IDisposable
         CopyCount = r.GetInt32(9),
         Pinned = r.GetInt32(10) != 0,
         Formats = r.IsDBNull(11) ? Array.Empty<string>() : r.GetString(11).Split('\u001f'),
+        DayKey = r.GetDouble(12),
+        PinKey = r.GetDouble(13),
     };
 
-    List<ClipItem> Query(string where, Action<SqliteCommand>? bind = null, int limit = 2000)
+    List<ClipItem> Query(string where, Action<SqliteCommand>? bind = null, int limit = 2000, string order = DayOrder)
     {
         using var c = _db.CreateCommand();
-        c.CommandText = $"SELECT {Cols} FROM items WHERE {where} ORDER BY created_at DESC LIMIT {limit}";
+        c.CommandText = $"SELECT {Cols} FROM items WHERE {where} ORDER BY {order} DESC, id DESC LIMIT {limit}";
         bind?.Invoke(c);
         var list = new List<ClipItem>();
         using var r = c.ExecuteReader();
@@ -270,7 +290,85 @@ public sealed class Store : IDisposable
         });
     }
 
-    public List<ClipItem> PinnedItems() => Query("pinned = 1");
+    public List<ClipItem> PinnedItems() => Query("pinned = 1", order: PinOrder);
+
+    /// <summary>
+    /// Issue #13: puts an item between the two neighbours it was dropped between (lists are newest-first;
+    /// null = top or bottom of the list). Only the moved item's key changes. Copying the same content
+    /// again still brings it back to the top of today.
+    /// </summary>
+    public void Reorder(long id, long? aboveId, long? belowId, bool pinnedList)
+    {
+        if (aboveId == null && belowId == null) return;
+        double? key = KeyBetween(aboveId, belowId, pinnedList);
+        if (key == null)
+        {
+            Renumber(pinnedList, (aboveId ?? belowId)!.Value); // midpoints ran out of precision (or keys tie): spread them out once
+            key = KeyBetween(aboveId, belowId, pinnedList);
+            if (key == null) return;
+        }
+        SetKey(pinnedList ? "pin_sort" : "sort_at", id, key.Value);
+        Changed?.Invoke();
+    }
+
+    double? KeyBetween(long? aboveId, long? belowId, bool pinnedList)
+    {
+        double? Key(long? id)
+        {
+            if (id == null) return null;
+            using var c = _db.CreateCommand();
+            c.CommandText = $"SELECT {(pinnedList ? PinOrder : DayOrder)} FROM items WHERE id=$id";
+            c.Parameters.AddWithValue("$id", id.Value);
+            return c.ExecuteScalar() is { } v and not DBNull ? Convert.ToDouble(v) : (double?)null;
+        }
+        double? a = Key(aboveId), b = Key(belowId);
+        if (aboveId != null && a == null || belowId != null && b == null) return null;
+        if (a == null) return b + 1;   // dropped at the top
+        if (b == null) return a - 1;   // dropped at the bottom
+        double mid = (a.Value + b.Value) / 2;
+        return mid < a && mid > b ? mid : null;
+    }
+
+    /// <summary>
+    /// Spreads the keys of one list 1 s apart from its top down, keeping the current order: the 固定 list,
+    /// or the day the anchor item belongs to (other days keep their keys).
+    /// </summary>
+    void Renumber(bool pinnedList, long anchorId)
+    {
+        var order = pinnedList ? PinOrder : DayOrder;
+        var rows = new List<(long Id, double Key)>();
+        using (var c = _db.CreateCommand())
+        {
+            if (pinnedList) c.CommandText = $"SELECT id, {order} FROM items WHERE pinned=1 ORDER BY {order} DESC, id DESC";
+            else
+            {
+                using var at = _db.CreateCommand();
+                at.CommandText = "SELECT created_at FROM items WHERE id=$id";
+                at.Parameters.AddWithValue("$id", anchorId);
+                if (at.ExecuteScalar() is not long ms) return;
+                var (from, to) = DayRange(DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeMilliseconds(ms).LocalDateTime));
+                c.CommandText = $"SELECT id, {order} FROM items WHERE created_at >= $a AND created_at < $b ORDER BY {order} DESC, id DESC";
+                c.Parameters.AddWithValue("$a", from);
+                c.Parameters.AddWithValue("$b", to);
+            }
+            using var r = c.ExecuteReader();
+            while (r.Read()) rows.Add((r.GetInt64(0), r.GetDouble(1)));
+        }
+        if (rows.Count == 0) return;
+        using var tx = _db.BeginTransaction();
+        double top = rows[0].Key;
+        for (int i = 0; i < rows.Count; i++) SetKey(pinnedList ? "pin_sort" : "sort_at", rows[i].Id, top - i * 1000.0);
+        tx.Commit();
+    }
+
+    void SetKey(string col, long id, double key)
+    {
+        using var c = _db.CreateCommand();
+        c.CommandText = $"UPDATE items SET {col}=$k WHERE id=$id";
+        c.Parameters.AddWithValue("$k", key);
+        c.Parameters.AddWithValue("$id", id);
+        c.ExecuteNonQuery();
+    }
 
     public List<ClipItem> Search(string text)
     {

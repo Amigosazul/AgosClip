@@ -334,8 +334,13 @@
                     <Border Style="{StaticResource Section}">
                         <StackPanel>
                             <TextBlock x:Name="UpdateStatus" Margin="0,0,0,8" TextWrapping="Wrap"/>
-                            <TextBlock x:Name="UpdateNotes" Style="{StaticResource Hint}" Margin="0,0,0,10" Visibility="Collapsed"
-                                       MaxHeight="110" TextTrimming="CharacterEllipsis"/>
+                            <!-- issue #9: release notes rendered from Markdown -->
+                            <Border x:Name="UpdateNotesBox" Margin="0,0,0,10" Visibility="Collapsed" CornerRadius="8" Padding="12,10,6,8" BorderThickness="1"
+                                    BorderBrush="{DynamicResource CardBorder}">
+                                <ScrollViewer x:Name="UpdateNotesScroll" MaxHeight="260" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
+                                    <StackPanel x:Name="UpdateNotes"/>
+                                </ScrollViewer>
+                            </Border>
                             <Border x:Name="ProgressTrack" Height="6" CornerRadius="3" Background="{DynamicResource Track}"
                                     Margin="0,0,0,10" Visibility="Collapsed">
                                 <Border x:Name="ProgressFill" HorizontalAlignment="Left" Width="0" CornerRadius="3" Background="{DynamicResource Accent}"/>
