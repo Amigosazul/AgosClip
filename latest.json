@@ -1,9 +1,9 @@
 {
-  "version": "1.8.3",
-  "file": "AgosClip-Setup-1.8.3.exe",
-  "sha256": "48aa12d000f9ca85b94d325ba80750233f3e904a37db639053a099ba2ccc7efd",
-  "size": 52783455,
-  "notes": "## AgosClip 1.8.3\n\n**重要修复：粘贴时卡死约 10 秒**\n- 1.4.1 到 1.8.1 版本中，从历史记录粘贴时，如果同时有程序在读剪贴板（AgosClip 自己的监听，或者远程桌面、同步类软件），界面会卡住大约 10 秒、显示“未响应”，有时还会被系统关掉。\n- 原因是旧的写入方式不会马上把内容放到剪贴板上，读取的一方和 AgosClip 会互相等待，直到 Windows 超时。现在改为一次性把所有格式的完整内容写入剪贴板，不会再出现这种互相等待。\n- 实测：另一个线程不停读取剪贴板时连续粘贴 15 次，修复前最慢一次要 10.3 秒，修复后最慢只要 77 毫秒。\n- 文字、富文本和表格、图片、文件的粘贴，以及“一键反馈”里复制诊断文件，都已经改用新的写法。\n\n**按 Win+V 打开更流畅**\n- 打开动画不再每一帧都改变窗口大小，而是让完整的窗口从输入框那一侧轻轻滑出。每帧的计算量减少了一半以上。\n- 查找当前输入框的位置和准备记录列表同时进行，最多等 80 毫秒，超时就按光标或鼠标位置弹出。\n- 上次关闭后如果没有新内容，直接沿用上次的列表，大约 1 毫秒就能打开。\n- 日志里会记录每次打开的耗时（`open timing`），方便排查卡顿。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.8.3/AgosClip-Setup-1.8.3.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.8.3/AgosClip-Setup-1.8.3.exe",
+  "version": "1.9.0",
+  "file": "AgosClip-Setup-1.9.0.exe",
+  "sha256": "fadb8d23874ac5570577883d494c53f44a926b641ed4fc10684d521bcb5f2de4",
+  "size": 52806454,
+  "notes": "## AgosClip 1.9.0\n\n**拖动调整顺序**\n- 按住条目上除按钮以外的任何地方拖动，即可调整顺序。只按下不拖动，仍然是点击粘贴。拖到列表上下边缘会自动滚动，拖动中按 Esc 取消。\n- 顺序会保存。每天的列表和「固定」列表各自排序，互不影响。同一内容再次复制时，仍会回到当天最上面。\n\n**预览**\n- 条目上新增「预览」按钮，也可以直接按空格。按 Esc 或空格关闭。\n- 图片：查看原图，可以在适应窗口和 100% 之间切换，也可以用 + / − 或 Ctrl+滚轮缩放。\n- 长文本：显示全文、保留换行，可以选中复制。\n- 文件：单个文本文件或图片文件直接显示内容；文件已被移动或删除时会提示。\n- 预览不会改动剪贴板。\n\n**面板可以调整大小**\n- 拖动面板的边或角即可调整大小，下次打开时沿用。双击边缘恢复默认大小。\n\n**日期切换**\n- 不显示日期卡片栏时，← 与 ‹ 一致（前一天），→ 与 › 一致（后一天），并会跳过「固定」。\n- 打开日历后，方向键在日历里移动，Enter 打开选中的日期，Esc 关闭日历。这时按键不会再误操作下面的列表。\n\n**更新说明**\n- 「设置 → 更新」里的更新说明会显示成带格式的文字（标题、加粗、列表、链接），不再显示原始符号。\n\n感谢 @Richard2091 提出 #9–#13。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.9.0/AgosClip-Setup-1.9.0.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.9.0/AgosClip-Setup-1.9.0.exe",
   "mirrors": [
     "https://ghfast.top/",
     "https://gh-proxy.com/",
