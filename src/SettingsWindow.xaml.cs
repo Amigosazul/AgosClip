@@ -58,6 +58,8 @@ public partial class SettingsWindow : Window
 
         RecordImages.IsChecked = S.RecordImages;
         ShowDateCards.IsChecked = S.ShowDateCards;
+        EnableScreenshot.IsChecked = S.EnableScreenshot;
+        ShowHotkey();
         GlassBox.IsChecked = S.Glass;
         GlassBox.IsEnabled = Glass.Supported;
         if (!Glass.Supported) GlassBox.Tag = "这台电脑的 Windows 版本不支持（需要 Windows 11 22H2+）";
@@ -98,6 +100,7 @@ public partial class SettingsWindow : Window
         if (_loading) return;
         S.RecordImages = RecordImages.IsChecked == true;
         S.ShowDateCards = ShowDateCards.IsChecked == true;
+        S.EnableScreenshot = EnableScreenshot.IsChecked == true;
         S.TakeOverWinV = TakeOverWinV.IsChecked == true;
         S.PasteAfterSelect = PasteAfterSelect.IsChecked == true;
         S.StartWithWindows = StartWithWindows.IsChecked == true;
@@ -105,6 +108,7 @@ public partial class SettingsWindow : Window
         S.AutoCheckUpdates = AutoUpdate.IsChecked == true;
         App.Current.ApplySettings();
         Glass.Apply(this);
+        ShowHotkey();
     }
 
     void Retention_Changed(object sender, RoutedEventArgs e)
@@ -170,7 +174,7 @@ public partial class SettingsWindow : Window
     /// <summary>Called by the app (tray "检查更新…") to start a check as soon as the window is open.</summary>
     public void StartCheck()
     {
-        Nav.SelectedIndex = 3;
+        Nav.SelectedIndex = 4; // 更新
         Check_Click(this, new RoutedEventArgs());
     }
 
@@ -178,11 +182,11 @@ public partial class SettingsWindow : Window
 
     void Nav_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        var pages = new FrameworkElement[] { PageGeneral, PageHistory, PageStorage, PageUpdate, PageAbout };
+        var pages = new FrameworkElement[] { PageGeneral, PageHistory, PageScreenshot, PageStorage, PageUpdate, PageAbout };
         for (int i = 0; i < pages.Length; i++)
             pages[i].Visibility = i == Nav.SelectedIndex ? Visibility.Visible : Visibility.Collapsed;
         PageScroll.ScrollToTop();
-        if (Nav.SelectedIndex == 2 && !_loading) UpdateStats();
+        if (Nav.SelectedIndex == 3 && !_loading) UpdateStats();
     }
 
     void LogSize_Changed(object sender, RoutedEventArgs e)
@@ -363,4 +367,66 @@ public partial class SettingsWindow : Window
 
     void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
     void CloseWindow_Click(object sender, RoutedEventArgs e) => Close();
+
+    // ───────────── screenshot hotkey ─────────────
+
+    bool _recording;
+
+    void ShowHotkey(string? status = null)
+    {
+        HotkeyText.Text = _recording ? "请按下组合键…" : string.IsNullOrEmpty(S.ScreenshotHotkey) ? "未设置" : S.ScreenshotHotkey.Replace("+", " + ");
+        HotkeyBox.SetResourceReference(Border.BorderBrushProperty, _recording ? "Accent" : "CardBorder");
+        HotkeyBox.IsEnabled = S.EnableScreenshot;
+        if (status != null) HotkeyStatus.Text = status;
+        else if (!S.EnableScreenshot) HotkeyStatus.Text = "截图已关闭";
+        else if (!App.Current.ScreenshotHotkeyActive && !_recording && !string.IsNullOrEmpty(S.ScreenshotHotkey))
+            HotkeyStatus.Text = "⚠ 这个快捷键被其他程序占用了，请换一个";
+        else if (!_recording) HotkeyStatus.Text = "点右边的框，然后按下想用的组合键";
+    }
+
+    void HotkeyBox_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        _recording = true;
+        App.Current.SuspendScreenshotHotkey(true);
+        HotkeyBox.Focus();
+        System.Windows.Input.Keyboard.Focus(HotkeyBox);
+        ShowHotkey("按 Esc 取消；需要包含 Ctrl / Alt / Shift 之一（F1–F12 和 PrintScreen 可以单独用）");
+    }
+
+    void StopRecording(string? status = null)
+    {
+        _recording = false;
+        App.Current.SuspendScreenshotHotkey(false);
+        ShowHotkey(status);
+    }
+
+    void HotkeyBox_LostFocus(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e)
+    {
+        if (_recording) StopRecording();
+    }
+
+    void HotkeyBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (!_recording) return;
+        e.Handled = true;
+        var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;
+        if (key == System.Windows.Input.Key.Escape) { StopRecording(); return; }
+        if (HotkeyCombo.IsModifierKey(key)) return; // wait for the actual key
+        var mods = System.Windows.Input.Keyboard.Modifiers;
+        if (System.Windows.Input.Keyboard.IsKeyDown(System.Windows.Input.Key.LWin) || System.Windows.Input.Keyboard.IsKeyDown(System.Windows.Input.Key.RWin))
+            mods |= System.Windows.Input.ModifierKeys.Windows;
+        var combo = new HotkeyCombo(mods, key);
+        if (!combo.IsValid) { ShowHotkey("需要包含 Ctrl / Alt / Shift 之一，再按一次"); return; }
+        _recording = false;
+        bool ok = App.Current.TrySetScreenshotHotkey(combo);
+        ShowHotkey(ok ? $"已设置为 {combo.ToString().Replace("+", " + ")}" : $"⚠ {combo} 已被其他程序占用，保留原来的快捷键");
+    }
+
+    void ShotNow_Click(object sender, RoutedEventArgs e)
+    {
+        Close(); // keep the settings window out of the picture
+        var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        t.Tick += (_, _) => { t.Stop(); App.Current.StartScreenshot(); };
+        t.Start();
+    }
 }

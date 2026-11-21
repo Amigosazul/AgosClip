@@ -241,6 +241,7 @@
                          SelectionChanged="Nav_SelectionChanged" Foreground="{DynamicResource Fg}">
                     <ListBoxItem Tag="&#xE713;" Content="通用"/>
                     <ListBoxItem Tag="&#xE81C;" Content="记录"/>
+                    <ListBoxItem Tag="&#xE722;" Content="截图"/>
                     <ListBoxItem Tag="&#xE8B7;" Content="存储与日志"/>
                     <ListBoxItem Tag="&#xE895;" Content="更新"/>
                     <ListBoxItem Tag="&#xE946;" Content="关于与反馈"/>
@@ -294,6 +295,41 @@
                             </StackPanel>
                             <Button x:Name="ClearBtn" Style="{StaticResource Btn}" Content="清空…" Click="Clear_Click"
                                     HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0"/>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+                <!-- 截图 -->
+                <StackPanel x:Name="PageScreenshot" Visibility="Collapsed">
+                    <TextBlock Text="截图" Style="{StaticResource PageTitle}"/>
+                    <Border Style="{StaticResource Section}">
+                        <StackPanel>
+                            <CheckBox x:Name="EnableScreenshot" Style="{StaticResource Switch}" Click="Changed" Margin="0,2"
+                                      Content="启用截图和钉图" Tag="截好后在右下角选择复制或钉图；钉图可以置顶或不置顶"/>
+                            <Border Style="{StaticResource Sep}"/>
+                            <Grid Margin="0,4,0,2">
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,180,0">
+                                    <TextBlock Text="截图快捷键"/>
+                                    <TextBlock x:Name="HotkeyStatus" Style="{StaticResource Hint}" Text="点右边的框，然后按下想用的组合键"/>
+                                </StackPanel>
+                                <Border x:Name="HotkeyBox" HorizontalAlignment="Right" VerticalAlignment="Center" MinWidth="160"
+                                        Focusable="True" Cursor="Hand" CornerRadius="7" Padding="12,6" BorderThickness="1"
+                                        Background="{DynamicResource Track}" BorderBrush="{DynamicResource CardBorder}"
+                                        MouseLeftButtonDown="HotkeyBox_Click" PreviewKeyDown="HotkeyBox_KeyDown" LostKeyboardFocus="HotkeyBox_LostFocus"
+                                        FocusVisualStyle="{x:Null}">
+                                    <TextBlock x:Name="HotkeyText" HorizontalAlignment="Center" FontWeight="SemiBold"/>
+                                </Border>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Section}">
+                        <Grid>
+                            <StackPanel VerticalAlignment="Center" Margin="0,0,120,0">
+                                <TextBlock Text="使用方法"/>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="拖动选择区域 · Enter 或双击复制 · Esc 或右键取消。钉图可拖动、滚轮缩放、双击关闭，右键有更多选项。托盘菜单也能截图。"/>
+                            </StackPanel>
+                            <Button Style="{StaticResource Btn}" Content="现在截图" Click="ShotNow_Click" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0"/>
                         </Grid>
                     </Border>
                 </StackPanel>

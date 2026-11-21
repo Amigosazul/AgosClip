@@ -73,6 +73,7 @@ internal static class SelfTest
                 IssueTests(app);
                 Issue8To13Tests(app, outDir);
                 PasteContentionTest(app);
+                ScreenshotTests(app, outDir);
             }
             Seed(app);
             PlacementTests();
@@ -167,7 +168,8 @@ internal static class SelfTest
             Pump(220);
             Check(panel.SearchReveal.Visibility == Visibility.Collapsed && panel.IsVisible && panel.IsKeyboardFocused,
                 $"{tag}: next Escape collapses search and keeps panel keyboard focus");
-            Key(System.Windows.Input.Key.Right);
+            // compact mode since #12: ← = ‹ (older), → = › (newer)
+            Key(System.Windows.Input.Key.Left);
             Check(panel.DayList.SelectedIndex == 1 && panel.ItemList.Items.Count == 2,
                 $"{tag}: date navigation works while search is collapsed");
             ClickSearch();
@@ -763,7 +765,7 @@ internal static class SelfTest
                     st = (long)Native.GetWindowLongPtr(new System.Windows.Interop.WindowInteropHelper(sw).Handle, -16);
                     Check((st & 0x00080000L) == 0, "…and it stays that way after minimise/restore");
                 }
-                string[] names = { "general", "history", "storage", "update", "about" };
+                string[] names = { "general", "history", "screenshot", "storage", "update", "about" };
                 for (int pi = 0; pi < names.Length; pi++)
                 {
                     if (dark && pi > 0) break; // dark: just the first page
@@ -1372,5 +1374,115 @@ internal static class SelfTest
         }
         finally { stop.Cancel(); reader.Join(15000); }
         Check(worst < 1000 && ok >= 10, $"pasting stays fast while another thread reads the clipboard (worst {worst:0} ms, {ok} ok, {reads} reads)");
+    }
+
+    // ───────────── screenshot & pin ─────────────
+
+    static void ScreenshotTests(App app, string outDir)
+    {
+        // hotkey text ⇄ combo
+        Check(HotkeyCombo.Parse("Alt+Shift+A")?.ToString() == "Alt+Shift+A" && HotkeyCombo.Parse("ctrl + f1")?.ToString() == "Ctrl+F1"
+              && HotkeyCombo.Parse("F1") != null && HotkeyCombo.Parse("A") == null && HotkeyCombo.Parse("Ctrl") == null
+              && HotkeyCombo.Parse("Ctrl+Alt+3")?.ToString() == "Ctrl+Alt+3", "hotkey text parses and formats");
+        // a combination another program already owns is detected
+        using (var a = new GlobalHotkey())
+        using (var b = new GlobalHotkey())
+        {
+            var combo = HotkeyCombo.Parse("Ctrl+Alt+Shift+F11")!.Value;
+            bool first = a.Set(combo), second = b.Set(combo);
+            if (!first && !InteractiveDesktop) Skip($"hotkey registration (first={first}, second={second})");
+            else Check(first && !second, $"a hotkey taken by someone else is reported as taken (first={first}, second={second})");
+        }
+
+        // a real screen grab must not throw (pixels are black in a non-interactive session)
+        try { var (img, vb) = ScreenCapture.CaptureAll(); Check(img.PixelWidth == vb.Width && img.PixelHeight == vb.Height, $"screen grab covers the virtual screen ({vb.Width}x{vb.Height})"); }
+        catch (Exception ex) { Skip("real screen grab: " + ex.GetType().Name); }
+
+        // the whole flow on a synthetic "desktop"
+        var bounds = ScreenCapture.VirtualBounds();
+        var desk = FakeDesktop(bounds.Width, bounds.Height, false);
+        desk.Measure(new Size(bounds.Width, bounds.Height)); desk.Arrange(new Rect(0, 0, bounds.Width, bounds.Height));
+        var shot = new RenderTargetBitmap(bounds.Width, bounds.Height, 96, 96, PixelFormats.Pbgra32);
+        shot.Render(desk); shot.Freeze();
+
+        (CaptureAction, BitmapSource, Int32Rect)? done = null;
+        Action<CaptureAction, BitmapSource, Int32Rect> onDone = (a, img, r) => done = (a, img, r);
+        CaptureSession.Completed += onDone;
+        try
+        {
+            var session = CaptureSession.StartWith(shot, bounds);
+            Pump(300);
+            Check(session.Overlays.Count == System.Windows.Forms.Screen.AllScreens.Length, $"one overlay per monitor ({session.Overlays.Count})");
+            var o = session.Overlays[0];
+            o.SelectForTest(new Rect(120, 90, 300, 180));
+            Pump(200);
+            var tb = o.Toolbar;
+            double tbRight = System.Windows.Controls.Canvas.GetLeft(tb) + tb.ActualWidth, tbTop = System.Windows.Controls.Canvas.GetTop(tb);
+            Check(tb.IsVisible && Math.Abs(tbRight - 420) < 2 && Math.Abs(tbTop - 276) < 2,
+                $"toolbar sits at the selection's bottom-right ({tbRight:0},{tbTop:0})");
+            Check(o.SizeText.Text == "300 × 180", $"selection size is shown in pixels ({o.SizeText.Text})");
+            o.PinBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            Pump(150);
+            Check(o.PinMenu.IsVisible && o.PinTopBtn.IsVisible && o.PinNormalBtn.IsVisible, "钉图 opens the 置顶 / 普通 choice");
+            RenderOnGlass((FrameworkElement)o.Content, Path.Combine(outDir, "screenshot-selection.png"), false, false);
+
+            Clipboard.SetText("before screenshot");
+            o.Copy();
+            Pump(300);
+            Check(!CaptureSession.IsActive && done?.Item1 == CaptureAction.Copy && done?.Item2.PixelWidth == 300 && done?.Item2.PixelHeight == 180,
+                "复制 closes the overlay with a 300×180 crop");
+            Check(Clipboard.ContainsImage() && Clipboard.GetImage()?.PixelWidth == 300, "the screenshot is on the clipboard");
+
+            // 置顶钉图
+            session = CaptureSession.StartWith(shot, bounds);
+            Pump(200);
+            session.Overlays[0].SelectForTest(new Rect(50, 60, 240, 120));
+            session.Overlays[0].PinTopBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            Pump(300);
+            var pin = PinWindow.All.LastOrDefault();
+            Check(pin != null && pin.OnTop && pin.Topmost && !pin.ShowInTaskbar, "置顶钉图 stays above other windows");
+            if (pin != null)
+            {
+                Native.GetWindowRect(new System.Windows.Interop.WindowInteropHelper(pin).Handle, out var pr);
+                Check(pr.Right - pr.Left == 240 && pr.Bottom - pr.Top == 120 && pr.Left == bounds.X + 50 && pr.Top == bounds.Y + 60,
+                    $"pin opens 1:1 where the area was ({pr.Left},{pr.Top} {pr.Right - pr.Left}x{pr.Bottom - pr.Top})");
+                pin.SetOnTop(false);
+                Check(!pin.Topmost && pin.ShowInTaskbar, "un-pinning from top makes it a normal window (shown in the taskbar)");
+                pin.ZoomBy(2, new Point(0, 0));
+                Pump(100);
+                Native.GetWindowRect(new System.Windows.Interop.WindowInteropHelper(pin).Handle, out var zr);
+                Check(zr.Right - zr.Left == 480 && Math.Abs(pin.Zoom - 2) < 1e-9, "the wheel zooms the pin");
+                RenderOnGlass((FrameworkElement)pin.Content, Path.Combine(outDir, "pin.png"), false, false);
+            }
+
+            // 普通钉图
+            session = CaptureSession.StartWith(shot, bounds);
+            Pump(200);
+            session.Overlays[0].SelectForTest(new Rect(10, 10, 80, 60));
+            session.Overlays[0].PinNormalBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            Pump(300);
+            Check(PinWindow.All.Count == 2 && !PinWindow.All[^1].OnTop && !PinWindow.All[^1].Topmost, "普通钉图 is not on top");
+            PinWindow.CloseAll();
+            Pump(100);
+            Check(PinWindow.All.Count == 0, "关闭所有钉图 closes every pin");
+
+            // Esc / cancel
+            session = CaptureSession.StartWith(shot, bounds);
+            Pump(150);
+            session.Cancel();
+            Check(!CaptureSession.IsActive && session.Overlays.Count == 0, "cancel closes the overlays");
+
+            // feature switch
+            app.Settings.EnableScreenshot = false;
+            app.StartScreenshot();
+            Check(!CaptureSession.IsActive, "with 截图 turned off nothing starts");
+            app.Settings.EnableScreenshot = true;
+        }
+        finally
+        {
+            CaptureSession.Completed -= onDone;
+            CaptureSession.Active?.Cancel();
+            PinWindow.CloseAll();
+        }
     }
 }

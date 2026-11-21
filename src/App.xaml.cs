@@ -113,6 +113,9 @@ public partial class App : Application
         _hook = new WinVHook(Dispatcher);
         _hook.Pressed += TogglePanel;
         if (Settings.TakeOverWinV) _hook.Enable();
+        _shotHotkey = new GlobalHotkey();
+        _shotHotkey.Pressed += StartScreenshot;
+        ApplyScreenshotHotkey();
 
         _panel = new PanelWindow();
         Watchdog.Start(Dispatcher);
@@ -150,6 +153,10 @@ public partial class App : Application
         menu.Items.Add("打开剪贴板", null, (_, _) => ShowPanel(IntPtr.Zero));
         _pauseItem = new Forms.ToolStripMenuItem("暂停记录", null, (_, _) => SetPaused(!Paused));
         menu.Items.Add(_pauseItem);
+        _shotItem = new Forms.ToolStripMenuItem("截图", null, (_, _) => StartScreenshot()) { Enabled = Settings.EnableScreenshot };
+        menu.Items.Add(_shotItem);
+        menu.Items.Add("关闭所有钉图", null, (_, _) => PinWindow.CloseAll());
+        menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("设置…", null, (_, _) => ShowSettings());
         menu.Items.Add("检查更新…", null, (_, _) => ShowSettings(checkUpdate: true));
         menu.Items.Add("反馈问题…", null, (_, _) => StartFeedback(null));
@@ -268,6 +275,8 @@ public partial class App : Application
         LogLimitBytes = Math.Max(1, Settings.LogMaxMB) * (1L << 20);
         Theme.Apply();
         if (Settings.TakeOverWinV) _hook?.Enable(); else _hook?.Disable();
+        ApplyScreenshotHotkey();
+        if (_shotItem != null) _shotItem.Enabled = Settings.EnableScreenshot;
         if (Settings.UsesDefaultConfigDir)
             try { Settings.ApplyAutoStart(Settings.StartWithWindows); } catch (Exception ex) { Log("autostart: " + ex.Message); }
         RunCleanup();
@@ -283,8 +292,57 @@ public partial class App : Application
         catch (Exception ex) { Log("cleanup: " + ex); }
     }
 
+    // ───────────── screenshot & pin ─────────────
+
+    GlobalHotkey? _shotHotkey;
+    Forms.ToolStripMenuItem? _shotItem;
+
+    /// <summary>True if the configured hotkey is active (false = disabled, empty, or taken by another program).</summary>
+    public bool ScreenshotHotkeyActive => _shotHotkey?.Current != null;
+
+    /// <summary>Registers Settings.ScreenshotHotkey. Returns false if another program already uses it.</summary>
+    public bool ApplyScreenshotHotkey()
+    {
+        if (_shotHotkey == null) return false;
+        if (!Settings.EnableScreenshot) { _shotHotkey.Clear(); return true; }
+        return _shotHotkey.Set(HotkeyCombo.Parse(Settings.ScreenshotHotkey));
+    }
+
+    /// <summary>Lets the settings page record a new combination without the old one firing.</summary>
+    public void SuspendScreenshotHotkey(bool suspend)
+    {
+        if (suspend) _shotHotkey?.Clear(); else ApplyScreenshotHotkey();
+    }
+
+    /// <summary>Tries a new combination; keeps the old one if the new one is taken.</summary>
+    public bool TrySetScreenshotHotkey(HotkeyCombo combo)
+    {
+        var old = Settings.ScreenshotHotkey;
+        Settings.ScreenshotHotkey = combo.ToString();
+        if (_shotHotkey == null || !Settings.EnableScreenshot || _shotHotkey.Set(combo)) { Settings.Save(); return true; }
+        Settings.ScreenshotHotkey = old;
+        ApplyScreenshotHotkey();
+        return false;
+    }
+
+    public void StartScreenshot()
+    {
+        if (!Settings.EnableScreenshot || CaptureSession.IsActive) return;
+        // our own panel must not end up in the picture
+        if (_panel is { IsVisible: true, IsSticky: false })
+        {
+            _panel.HidePanel();
+            var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+            t.Tick += (_, _) => { t.Stop(); CaptureSession.Start(); };
+            t.Start();
+        }
+        else CaptureSession.Start();
+    }
+
     public void Quit()
     {
+        PinWindow.CloseAll();
+        _shotHotkey?.Dispose();
         _hook?.Dispose();
         _monitor?.Dispose();
         if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
