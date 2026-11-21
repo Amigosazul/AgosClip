@@ -434,64 +434,6 @@
                     </Border>
                 </Grid>
 
-                <!-- Preview an item (issue #10): never touches the clipboard -->
-                <Grid x:Name="PreviewOverlay" Grid.RowSpan="6" Margin="-14,-10" Visibility="Collapsed">
-                    <Rectangle Fill="{DynamicResource Dim}" RadiusX="8" RadiusY="8" MouseLeftButtonDown="PreviewBackdrop_Click"/>
-                    <Border Margin="8,40,8,8" Background="{DynamicResource OverlayBg}" BorderBrush="{DynamicResource Hairline}" BorderThickness="1"
-                            CornerRadius="12" Padding="10,8,10,10">
-                        <Border.Effect>
-                            <DropShadowEffect BlurRadius="24" ShadowDepth="6" Direction="270" Opacity="0.22" Color="Black"/>
-                        </Border.Effect>
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition/>
-                            </Grid.RowDefinitions>
-                            <Grid Margin="2,0,-2,6">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock x:Name="PreviewTitle" Text="预览" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis"/>
-                                    <TextBlock x:Name="PreviewInfo" FontSize="11" Foreground="{DynamicResource SubFg}" TextTrimming="CharacterEllipsis" Margin="0,1,0,0"/>
-                                </StackPanel>
-                                <Button x:Name="PreviewZoomOut" Grid.Column="1" Style="{StaticResource IconButton}" Content="&#xE71F;" FontSize="12"
-                                        ToolTip="缩小 (-)" Click="PreviewZoomOut_Click"/>
-                                <Button x:Name="PreviewZoomText" Grid.Column="2" Style="{StaticResource IconButton}" Width="48" FontSize="11.5"
-                                        FontFamily="{StaticResource UiFont}" Content="适应" ToolTip="在适应窗口和 100% 之间切换 (0)" Click="PreviewZoomToggle_Click"/>
-                                <Button x:Name="PreviewZoomIn" Grid.Column="3" Style="{StaticResource IconButton}" Content="&#xE8A3;" FontSize="12"
-                                        ToolTip="放大 (+)，也可以 Ctrl + 滚轮" Click="PreviewZoomIn_Click"/>
-                                <Button Grid.Column="4" Style="{StaticResource IconButton}" Content="&#xE711;" FontSize="12"
-                                        ToolTip="关闭 (Esc)" Click="PreviewClose_Click"/>
-                            </Grid>
-                            <Border Grid.Row="1" CornerRadius="8" Background="{DynamicResource CardBg}" BorderBrush="{DynamicResource CardBorder}"
-                                    BorderThickness="1" ClipToBounds="True">
-                                <Grid>
-                                    <ScrollViewer x:Name="PreviewImageScroller" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
-                                                  Visibility="Collapsed" PreviewMouseWheel="PreviewImage_Wheel" SizeChanged="PreviewScroller_SizeChanged">
-                                        <Image x:Name="PreviewImage" Stretch="None" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                               RenderOptions.BitmapScalingMode="HighQuality" MouseLeftButtonDown="PreviewImage_Click">
-                                            <Image.LayoutTransform>
-                                                <ScaleTransform x:Name="PreviewScale"/>
-                                            </Image.LayoutTransform>
-                                        </Image>
-                                    </ScrollViewer>
-                                    <TextBox x:Name="PreviewText" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent"
-                                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="8,6"
-                                             FontFamily="Cascadia Mono, Consolas, Microsoft YaHei UI" FontSize="12.5"
-                                             Foreground="{DynamicResource Fg}" SelectionBrush="{DynamicResource Accent}"
-                                             Visibility="Collapsed" IsUndoEnabled="False"/>
-                                    <TextBlock x:Name="PreviewMessage" Margin="20" TextAlignment="Center" TextWrapping="Wrap"
-                                               HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource SubFg}" Visibility="Collapsed"/>
-                                </Grid>
-                            </Border>
-                        </Grid>
-                    </Border>
-                </Grid>
             </Grid>
         </Grid>
     </Border>

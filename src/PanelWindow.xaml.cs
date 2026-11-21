@@ -45,7 +45,13 @@ public partial class PanelWindow : Window
         // Our reveal already animates the real glass window; avoid a second DWM show/hide transition.
         int disableTransitions = 1;
         Native.DwmSetWindowAttribute(_hwnd, 3, ref disableTransitions, 4); // DWMWA_TRANSITIONS_FORCEDISABLED
-        Deactivated += (_, _) => { if (!_pasting && !Snapshot && !_sticky && !EditOpen) HidePanel(); };
+        Deactivated += (_, _) =>
+        {
+            if (_pasting || Snapshot || _sticky || EditOpen) return;
+            // focus moving to our own preview window is not "clicking elsewhere"
+            Dispatcher.BeginInvoke(() => { if (!ItemPreviewWindow.IsOpen || !ItemPreviewWindow.Current.IsActive) { if (!IsActive) HidePanel(); } },
+                System.Windows.Threading.DispatcherPriority.Input);
+        };
         // Remember the last window the user worked in, so a pinned panel knows where to paste.
         _fgProc = (_, _, hwnd, _, _, _, _) =>
         {
@@ -403,7 +409,6 @@ public partial class PanelWindow : Window
         if (_sticky) SetSticky(false);
         CalOpen = false;
         if (EditOpen) { _editing = null; EditOverlay.Visibility = Visibility.Collapsed; }
-        if (PreviewOpen) { PreviewOverlay.Visibility = Visibility.Collapsed; SetPreviewMode(""); }
         EndDrag(commit: false);
         if (!IsVisible) { SetSearchOpen(false, animate: false, focus: false); return; }
         if (_closing) return;
@@ -1066,22 +1071,16 @@ public partial class PanelWindow : Window
 
     void EditText(string msg) { EmptyText.Text = msg; EmptyState.Visibility = Visibility.Visible; }
 
-    // ───────────── preview (issue #10) ─────────────
+    // ───────────── preview (issue #10): a separate window, see ItemPreviewWindow ─────────────
 
-    internal bool PreviewOpen => PreviewOverlay.Visibility == Visibility.Visible;
-    /// <summary>Image zoom; null = fit the viewport (never upscaled).</summary>
-    double? _zoom;
-    internal string PreviewMode { get; private set; } = "";
-
-    static readonly HashSet<string> ImageExt = new(StringComparer.OrdinalIgnoreCase)
-        { ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".ico", ".webp" };
-    static readonly HashSet<string> TextExt = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".txt", ".md", ".markdown", ".json", ".log", ".csv", ".tsv", ".xml", ".yaml", ".yml", ".ini", ".cfg", ".conf", ".toml",
-        ".html", ".htm", ".css", ".js", ".ts", ".jsx", ".tsx", ".cs", ".py", ".java", ".c", ".h", ".cpp", ".go", ".rs", ".sql",
-        ".sh", ".ps1", ".bat", ".cmd", ".srt", ".properties", ".gitignore",
-    };
-    const long MaxPreviewText = 2 * 1024 * 1024;
+    static ItemPreviewWindow Pv => ItemPreviewWindow.Current;
+    internal bool PreviewOpen => ItemPreviewWindow.IsOpen;
+    internal string PreviewMode => ItemPreviewWindow.IsOpen ? Pv.PreviewMode : "";
+    internal double CurrentZoom => Pv.CurrentZoom;
+    internal TextBox PreviewText => Pv.PreviewText;
+    internal Image PreviewImage => Pv.PreviewImage;
+    internal TextBlock PreviewMessage => Pv.PreviewMessage;
+    internal static string ReadTextFile(string path) => ItemPreviewWindow.ReadTextFile(path);
 
     void Preview_Click(object sender, RoutedEventArgs e)
     {
@@ -1092,198 +1091,28 @@ public partial class PanelWindow : Window
     internal void OpenPreview(ItemVm vm)
     {
         CalOpen = false;
-        var item = vm.Item;
-        PreviewTitle.Text = item.Kind switch { ClipKind.Image => "图片", ClipKind.Files => vm.FilesTitle, _ => "文本" };
-        PreviewInfo.Text = vm.Meta;
-        switch (item.Kind)
+        var w = Pv;
+        if (!w.IsVisible) w.PlaceBeside(IsVisible ? this : null);
+        if (!_previewHooked)
         {
-            case ClipKind.Image:
-                var path = item.ImagePath == null ? null : System.IO.Path.Combine(Settings.DataDir, item.ImagePath);
-                if (!ShowPreviewImage(path)) ShowPreviewMessage("图片文件已不存在，无法预览");
-                break;
-            case ClipKind.Files:
-                PreviewFiles(item.Paths);
-                break;
-            default:
-                ShowPreviewText(item.Text ?? "");
-                int len = (item.Text ?? "").Length; // the meta line already shows the length past 300
-                PreviewInfo.Text = $"{vm.Meta}{(len > 300 ? "" : $"  ·  {len} 字")}  ·  {LineCount(item.Text)} 行";
-                break;
-        }
-        PreviewOverlay.Visibility = Visibility.Visible;
-        if (PreviewMode == "text") { PreviewText.Focus(); Keyboard.Focus(PreviewText); PreviewText.CaretIndex = 0; PreviewText.ScrollToHome(); }
-        else FocusPanelInput();
-    }
-
-    static int LineCount(string? s) => string.IsNullOrEmpty(s) ? 0 : s.Count(c => c == '\n') + (s.EndsWith('\n') ? 0 : 1);
-
-    void PreviewFiles(string[] paths)
-    {
-        if (paths.Length == 1)
-        {
-            var p = paths[0];
-            if (!System.IO.File.Exists(p) && !System.IO.Directory.Exists(p)) { ShowPreviewMessage($"文件已被移动或删除：\n{p}"); return; }
-            var ext = System.IO.Path.GetExtension(p);
-            if (System.IO.File.Exists(p) && ImageExt.Contains(ext))
+            _previewHooked = true;
+            w.Closed_ += () =>
             {
-                if (!ShowPreviewImage(p)) ShowPreviewMessage($"无法读取这张图片：\n{p}");
-                return;
-            }
-            if (System.IO.File.Exists(p) && TextExt.Contains(ext))
-            {
-                try
-                {
-                    var info = new System.IO.FileInfo(p);
-                    if (info.Length > MaxPreviewText) { ShowPreviewMessage($"文件太大（{info.Length / 1048576.0:0.#} MB），只预览 2 MB 以内的文本文件"); return; }
-                    var text = ReadTextFile(p);
-                    ShowPreviewText(text);
-                    PreviewInfo.Text = $"{p}  ·  {LineCount(text)} 行";
-                }
-                catch (Exception ex) { ShowPreviewMessage($"无法读取这个文件：{ex.Message}"); }
-                return;
-            }
+                // back where the user was, if the panel is still open
+                if (!IsVisible) return;
+                if (Selected is { } s) ItemList.ScrollIntoView(s);
+                Activate();
+                FocusPanelInput();
+            };
         }
-        // anything else: list the entries with their state
-        var sb = new System.Text.StringBuilder();
-        foreach (var p in paths)
-        {
-            bool dir = System.IO.Directory.Exists(p), file = System.IO.File.Exists(p);
-            string state = dir ? "文件夹" : file ? FormatSize(new System.IO.FileInfo(p).Length) : "已不存在";
-            sb.Append(p).Append("    (").Append(state).Append(")\n");
-        }
-        ShowPreviewText(sb.ToString().TrimEnd());
-        PreviewInfo.Text = $"{paths.Length} 项 · 这类文件不能直接预览，下面是路径";
+        w.OpenPreview(vm);
     }
 
-    static string FormatSize(long n) => n < 1024 ? $"{n} B" : n < 1048576 ? $"{n / 1024.0:0.#} KB" : $"{n / 1048576.0:0.#} MB";
+    bool _previewHooked;
 
-    /// <summary>UTF-8 (with or without BOM) / UTF-16 by BOM; text that isn't valid UTF-8 is read as GBK.</summary>
-    internal static string ReadTextFile(string path)
-    {
-        var bytes = System.IO.File.ReadAllBytes(path);
-        if (bytes.Length >= 2 && (bytes[0] == 0xFF && bytes[1] == 0xFE || bytes[0] == 0xFE && bytes[1] == 0xFF))
-            return new System.IO.StreamReader(new System.IO.MemoryStream(bytes), true).ReadToEnd();
-        try
-        {
-            var s = new System.Text.UTF8Encoding(false, true).GetString(bytes);
-            return s.Length > 0 && s[0] == '﻿' ? s[1..] : s;
-        }
-        catch (System.Text.DecoderFallbackException)
-        {
-            System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
-            return System.Text.Encoding.GetEncoding(936).GetString(bytes);
-        }
-    }
+    internal void ClosePreview() => Pv.ClosePreview();
 
-    void SetPreviewMode(string mode)
-    {
-        PreviewMode = mode;
-        PreviewImageScroller.Visibility = mode == "image" ? Visibility.Visible : Visibility.Collapsed;
-        PreviewText.Visibility = mode == "text" ? Visibility.Visible : Visibility.Collapsed;
-        PreviewMessage.Visibility = mode == "message" ? Visibility.Visible : Visibility.Collapsed;
-        PreviewZoomIn.Visibility = PreviewZoomOut.Visibility = PreviewZoomText.Visibility =
-            mode == "image" ? Visibility.Visible : Visibility.Collapsed;
-        if (mode != "image") PreviewImage.Source = null; // let a large bitmap go
-        if (mode != "text") PreviewText.Clear();
-    }
-
-    void ShowPreviewText(string text) { SetPreviewMode("text"); PreviewText.Text = text; }
-    void ShowPreviewMessage(string msg) { SetPreviewMode("message"); PreviewMessage.Text = msg; }
-
-    bool ShowPreviewImage(string? path)
-    {
-        if (path == null || !System.IO.File.Exists(path)) return false;
-        try
-        {
-            var b = new System.Windows.Media.Imaging.BitmapImage();
-            b.BeginInit();
-            b.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
-            b.CreateOptions = System.Windows.Media.Imaging.BitmapCreateOptions.IgnoreColorProfile;
-            b.UriSource = new Uri(path);
-            b.EndInit();
-            b.Freeze();
-            SetPreviewMode("image");
-            PreviewImage.Source = b;
-            // show pixels 1:1 in physical pixels at 100% (the bitmap's DPI must not shrink or grow it)
-            PreviewImage.Width = b.PixelWidth / DpiScale;
-            PreviewImage.Height = b.PixelHeight / DpiScale;
-            _zoom = null;
-            ApplyZoom();
-            return true;
-        }
-        catch { return false; }
-    }
-
-    double DpiScale => VisualTreeHelper.GetDpi(this).DpiScaleX;
-
-    double FitZoom
-    {
-        get
-        {
-            if (PreviewImage.Source == null) return 1;
-            double vw = Math.Max(1, PreviewImageScroller.ActualWidth - 4), vh = Math.Max(1, PreviewImageScroller.ActualHeight - 4);
-            if (PreviewImageScroller.ActualWidth <= 0) { vw = Math.Max(1, _wDip - 60); vh = Math.Max(1, _hDip - 120); }
-            return Math.Min(1, Math.Min(vw / PreviewImage.Width, vh / PreviewImage.Height));
-        }
-    }
-
-    internal double CurrentZoom => _zoom ?? FitZoom;
-
-    void ApplyZoom()
-    {
-        double z = CurrentZoom;
-        PreviewScale.ScaleX = PreviewScale.ScaleY = z;
-        PreviewZoomText.Content = _zoom == null ? "适应" : $"{Math.Round(z * 100)}%";
-    }
-
-    void Zoom(double factor)
-    {
-        _zoom = Math.Clamp(CurrentZoom * factor, 0.05, 8);
-        ApplyZoom();
-    }
-
-    void ToggleZoom() { _zoom = _zoom == null ? 1 : null; ApplyZoom(); }
-
-    void PreviewZoomIn_Click(object sender, RoutedEventArgs e) => Zoom(1.25);
-    void PreviewZoomOut_Click(object sender, RoutedEventArgs e) => Zoom(0.8);
-    void PreviewZoomToggle_Click(object sender, RoutedEventArgs e) => ToggleZoom();
-    void PreviewImage_Click(object sender, MouseButtonEventArgs e) { if (e.ClickCount == 2) { ToggleZoom(); e.Handled = true; } }
-    void PreviewScroller_SizeChanged(object sender, SizeChangedEventArgs e) { if (_zoom == null) ApplyZoom(); }
-
-    void PreviewImage_Wheel(object sender, MouseWheelEventArgs e)
-    {
-        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return; // plain wheel scrolls
-        Zoom(e.Delta > 0 ? 1.15 : 1 / 1.15);
-        e.Handled = true;
-    }
-
-    void PreviewBackdrop_Click(object sender, MouseButtonEventArgs e) { ClosePreview(); e.Handled = true; }
-    void PreviewClose_Click(object sender, RoutedEventArgs e) => ClosePreview();
-
-    internal void ClosePreview()
-    {
-        if (!PreviewOpen) return;
-        PreviewOverlay.Visibility = Visibility.Collapsed;
-        SetPreviewMode("");
-        if (Selected is { } s) ItemList.ScrollIntoView(s); // back where the user was
-        FocusPanelInput();
-    }
-
-    /// <summary>Esc / Space close. Image: + − 0 zoom. Everything else goes to the read-only text (select, Ctrl+C, scroll).</summary>
-    bool HandlePreviewKey(Key key, bool ctrl)
-    {
-        switch (key)
-        {
-            case Key.Escape: ClosePreview(); return true;
-            case Key.Space: ClosePreview(); return true; // like Quick Look: Space opens and closes
-            case Key.OemPlus or Key.Add when PreviewMode == "image": Zoom(1.25); return true;
-            case Key.OemMinus or Key.Subtract when PreviewMode == "image": Zoom(0.8); return true;
-            case Key.D0 or Key.NumPad0 when PreviewMode == "image": ToggleZoom(); return true;
-            case Key.Enter or Key.Delete or Key.F2: return true; // never paste/delete/edit underneath
-            case Key.P or Key.F when ctrl: return true;
-            default: return false;
-        }
-    }
+    bool HandlePreviewKey(Key key, bool ctrl) => Pv.HandlePreviewKey(key, ctrl);
 
     void EditCancel_Click(object sender, RoutedEventArgs e) => CloseEditor();
     void EditSave_Click(object sender, RoutedEventArgs e) => SaveEditor();

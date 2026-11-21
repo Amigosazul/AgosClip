@@ -1140,21 +1140,25 @@ internal static class SelfTest
         var longVm = vms.First(v => v.Item.Text == longText);
         panel.ItemList.SelectedItem = longVm;
         string clipBefore = s.ItemsOnDay(Today).Count.ToString();
-        Check(panel.HandleKey(System.Windows.Input.Key.Space, none) && panel.PreviewOpen && panel.PreviewMode == "text"
+        Check(panel.HandleKey(System.Windows.Input.Key.Space, none) && ItemPreviewWindow.Current.IsVisible
+              && !ReferenceEquals(ItemPreviewWindow.Current, panel) && ItemPreviewWindow.Current.ActualWidth > panel.ActualWidth,
+            $"Space opens the preview in its own, larger window ({ItemPreviewWindow.Current.ActualWidth:0}×{ItemPreviewWindow.Current.ActualHeight:0})");
+        Check(panel.PreviewOpen && panel.PreviewMode == "text"
               && panel.PreviewText.Text == longText, "Space previews the complete text, line breaks kept");
         Check(panel.HandleKey(System.Windows.Input.Key.Enter, none) && panel.PreviewOpen && panel.HandleKey(System.Windows.Input.Key.Delete, none)
               && s.ItemsOnDay(Today).Count.ToString() == clipBefore, "Enter / Delete in the preview don't paste or delete");
         panel.Show(); Pump(300);
-        RenderOnGlass((FrameworkElement)panel.Content, Path.Combine(outDir, "preview-text-light.png"), false, true);
+        RenderOnGlass((FrameworkElement)ItemPreviewWindow.Current.Content, Path.Combine(outDir, "preview-text-light.png"), false, true);
         panel.HandleKey(System.Windows.Input.Key.Escape, none);
         Check(!panel.PreviewOpen && panel.ItemList.SelectedItem == longVm, "Esc closes the preview and keeps the list position");
+        Check(!ItemPreviewWindow.Current.IsVisible, "the preview is a separate window, hidden again after Esc");
 
         var imgVm = vms.First(v => v.IsImage && v.Item.Width == 1800);
         panel.OpenPreview(imgVm);
         Pump(200);
         double fit = panel.CurrentZoom;
         Check(panel.PreviewMode == "image" && panel.PreviewImage.Source != null && fit < 1, $"image preview fits the panel (zoom {fit:0.00})");
-        RenderOnGlass((FrameworkElement)panel.Content, Path.Combine(outDir, "preview-image-light.png"), false, true);
+        RenderOnGlass((FrameworkElement)ItemPreviewWindow.Current.Content, Path.Combine(outDir, "preview-image-light.png"), false, true);
         panel.HandleKey(System.Windows.Input.Key.OemPlus, none);
         Check(panel.CurrentZoom > fit, "+ zooms in");
         panel.HandleKey(System.Windows.Input.Key.D0, none);
