@@ -1488,6 +1488,16 @@ internal static class SelfTest
         }
     }
 
+    static IEnumerable<T> FindAll<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var c = VisualTreeHelper.GetChild(root, i);
+            if (c is T t) yield return t;
+            foreach (var x in FindAll<T>(c)) yield return x;
+        }
+    }
+
     static byte[] Bgra(BitmapSource b)
     {
         var c = new FormatConvertedBitmap(b, PixelFormats.Bgra32, null, 0);
@@ -1648,10 +1658,21 @@ internal static class SelfTest
             offset = 0;
             var a = LongShot.StartForTest(region, Grab, tick);
             Pump(800);
-            Check(offset == 0 && LongShot.IsActive && grabs > 5 && a.Status.Contains("滚轮"),
+            Check(offset == 0 && LongShot.IsActive && grabs > 5 && a.Status.Contains("滚动页面截取更多内容"),
                 $"long shot waits for the user's wheel: no automatic scrolling, no automatic stop ({a.Status})");
 
             // 2) follows the user's scrolling to the bottom and keeps waiting there until 完成
+            for (int i = 0; i < 12; i++) { UserScrolls(100); Pump(60); }
+            Check(a.HasPreview && a.PreviewRows > 0 && Math.Abs(a.PreviewRows - a.Stitch.Height * 150.0 / W) <= 2,
+                $"the live preview grows with the stitched picture ({a.PreviewRows} preview rows for {a.Stitch.Height} px)");
+            var bar = (FrameworkElement)a.Toolbar.Content;
+            var buttons = FindAll<System.Windows.Controls.Button>(bar).ToList();
+            Check(buttons.Count == 7, $"toolbar: 预览 / 钉图 / 保存 / 取消 / 完成 + 置顶·普通 ({buttons.Count} buttons)");
+            buttons[1].RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent)); // 钉图 → choices
+            Pump(150);
+            if (a.PreviewWindow?.Content is FrameworkElement pv)
+                RenderOnGlass(pv, Path.Combine(_outDir, "longshot-preview.png"), false, false);
+            RenderOnGlass(bar, Path.Combine(_outDir, "longshot-toolbar.png"), false, false);
             for (int i = 0; i < 40 && offset < H - F; i++) { UserScrolls(100); Pump(60); }
             Pump(600);
             Check(LongShot.IsActive, "still waiting at the bottom until the user clicks 完成");

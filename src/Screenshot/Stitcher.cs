@@ -17,6 +17,8 @@ public sealed class Stitcher
     readonly List<byte[]> _rows = new();   // accumulated output, one Bgra32 row per entry
     ulong[]? _prevHashes;
     public int Height => _rows.Count;
+    /// <summary>One stitched row (Bgra32), for building a live preview incrementally.</summary>
+    internal byte[] RowAt(int y) => _rows[y];
     public int Width => _w;
     /// <summary>Consecutive frames that brought nothing new (the bottom was reached).</summary>
     public int StillFrames { get; private set; }
