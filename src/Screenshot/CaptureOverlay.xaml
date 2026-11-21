@@ -112,7 +112,7 @@
                             <TextBlock Text="撤回"/>
                         </StackPanel>
                     </Button>
-                    <Button x:Name="LongBtn" Style="{StaticResource ToolToggle}" Click="Long_Click" ToolTip="长截图：自动向下滚动这块区域并拼接">
+                    <Button x:Name="LongBtn" Style="{StaticResource ToolToggle}" Click="Long_Click" ToolTip="长截图：用鼠标滚轮滚动这块区域，边滚边拼接">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE74B;" FontFamily="{StaticResource IconFont}" FontSize="13" Margin="0,1,5,0"/>
                             <TextBlock Text="长截图"/>
