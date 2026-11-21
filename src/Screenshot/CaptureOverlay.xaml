@@ -27,6 +27,34 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="ToolToggle" TargetType="Button" BasedOn="{StaticResource ToolBtn}">
+            <Setter Property="Padding" Value="9,5"/>
+        </Style>
+        <Style x:Key="Swatch" TargetType="Button">
+            <Setter Property="Width" Value="20"/>
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="Margin" Value="2,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Ellipse x:Name="ring" Stroke="{DynamicResource Accent}" StrokeThickness="2" Opacity="0"/>
+                            <Ellipse Margin="3" Fill="{TemplateBinding Background}" Stroke="#40000000" StrokeThickness="1"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Tag" Value="on">
+                                <Setter TargetName="ring" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ring" Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Canvas x:Name="Stage" ClipToBounds="True">
@@ -40,12 +68,14 @@
                 </GeometryGroup>
             </Path.Data>
         </Path>
+        <!-- annotations (text, mosaic) live above the dim layer, inside the selection -->
+        <Canvas x:Name="AnnoLayer" IsHitTestVisible="True"/>
         <Rectangle x:Name="SelBorder" Stroke="{DynamicResource Accent}" StrokeThickness="1.5" Visibility="Collapsed" IsHitTestVisible="False"/>
         <Border x:Name="SizeLabel" Background="#CC1E1E20" CornerRadius="4" Padding="6,2" Visibility="Collapsed" IsHitTestVisible="False">
             <TextBlock x:Name="SizeText" Foreground="White" FontSize="11.5"/>
         </Border>
         <Border x:Name="Hint" Background="#CC1E1E20" CornerRadius="8" Padding="14,8" IsHitTestVisible="False">
-            <TextBlock Foreground="White" Text="拖动鼠标选择截图区域 · Enter 复制 · Esc 取消"/>
+            <TextBlock Foreground="White" Text="拖动鼠标选择截图区域 · Enter 复制 · Ctrl+Z 撤回 · Esc 取消"/>
         </Border>
 
         <!-- toolbar at the selection's bottom-right -->
@@ -56,6 +86,39 @@
             </Border.Effect>
             <StackPanel>
                 <StackPanel Orientation="Horizontal">
+                    <!-- editing tools -->
+                    <Button x:Name="TextToolBtn" Style="{StaticResource ToolToggle}" Click="TextTool_Click" ToolTip="文字：在选区里点一下输入">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8D2;" FontFamily="{StaticResource IconFont}" FontSize="13" Margin="0,1,5,0"/>
+                            <TextBlock Text="文字"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="MosaicToolBtn" Style="{StaticResource ToolToggle}" Click="MosaicTool_Click" ToolTip="马赛克：按住拖动涂抹">
+                        <StackPanel Orientation="Horizontal">
+                            <Grid Width="13" Height="13" Margin="0,1,5,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                                <Rectangle Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Margin="0.5"/>
+                                <Rectangle Grid.Column="1" Grid.Row="1" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Margin="0.5"/>
+                                <Rectangle Grid.Column="1" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Margin="0.5" Opacity="0.4"/>
+                                <Rectangle Grid.Row="1" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Margin="0.5" Opacity="0.4"/>
+                            </Grid>
+                            <TextBlock Text="马赛克"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="UndoBtn" Style="{StaticResource ToolToggle}" Click="Undo_Click" ToolTip="撤回 (Ctrl+Z)" IsEnabled="False">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE7A7;" FontFamily="{StaticResource IconFont}" FontSize="13" Margin="0,1,5,0"/>
+                            <TextBlock Text="撤回"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="LongBtn" Style="{StaticResource ToolToggle}" Click="Long_Click" ToolTip="长截图：自动向下滚动这块区域并拼接">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE74B;" FontFamily="{StaticResource IconFont}" FontSize="13" Margin="0,1,5,0"/>
+                            <TextBlock Text="长截图"/>
+                        </StackPanel>
+                    </Button>
+                    <Border Width="1" Margin="4,6" Background="{DynamicResource CardBorder}"/>
                     <Button x:Name="CopyBtn" Style="{StaticResource ToolBtn}" Click="Copy_Click" ToolTip="复制到剪贴板 (Enter / 双击)">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE8C8;" FontFamily="{StaticResource IconFont}" FontSize="13" Margin="0,1,6,0"/>
@@ -72,6 +135,18 @@
                     <Button Style="{StaticResource ToolBtn}" Click="Cancel_Click" ToolTip="取消 (Esc / 右键)" Padding="9,5">
                         <TextBlock Text="&#xE711;" FontFamily="{StaticResource IconFont}" FontSize="12" Margin="0,1,0,0"/>
                     </Button>
+                </StackPanel>
+                <!-- text options: size + colour -->
+                <StackPanel x:Name="TextOptions" Orientation="Horizontal" Visibility="Collapsed" Margin="6,6,6,2">
+                    <TextBlock Text="字号" Foreground="{DynamicResource SubFg}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <WrapPanel x:Name="TextSizes"/>
+                    <Border Width="1" Margin="8,2" Background="{DynamicResource CardBorder}"/>
+                    <WrapPanel x:Name="TextColors" VerticalAlignment="Center"/>
+                </StackPanel>
+                <!-- mosaic options: block size -->
+                <StackPanel x:Name="MosaicOptions" Orientation="Horizontal" Visibility="Collapsed" Margin="6,6,6,2">
+                    <TextBlock Text="马赛克大小" Foreground="{DynamicResource SubFg}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <WrapPanel x:Name="MosaicSizes"/>
                 </StackPanel>
                 <!-- pin choices: on top of everything, or a normal window -->
                 <StackPanel x:Name="PinMenu" Visibility="Collapsed" Margin="0,4,0,0">

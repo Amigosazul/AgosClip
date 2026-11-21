@@ -37,6 +37,22 @@ public static class ScreenCapture
         finally { DeleteObject(h); }
     }
 
+    /// <summary>Grabs one screen rectangle (physical pixels).</summary>
+    public static BitmapSource CaptureRect(Int32Rect r)
+    {
+        using var bmp = new System.Drawing.Bitmap(r.Width, r.Height, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+        using (var g = System.Drawing.Graphics.FromImage(bmp))
+            g.CopyFromScreen(r.X, r.Y, 0, 0, new System.Drawing.Size(r.Width, r.Height), System.Drawing.CopyPixelOperation.SourceCopy);
+        var h = bmp.GetHbitmap();
+        try
+        {
+            var src = Imaging.CreateBitmapSourceFromHBitmap(h, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+            src.Freeze();
+            return src;
+        }
+        finally { DeleteObject(h); }
+    }
+
     public static BitmapSource Crop(BitmapSource full, Int32Rect r)
     {
         var c = new CroppedBitmap(full, r);

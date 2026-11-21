@@ -85,7 +85,7 @@ public sealed class CaptureSession
     internal void Finish(CaptureOverlay owner, CaptureAction action)
     {
         var where = owner.ScreenSelection();
-        var crop = ScreenCapture.Crop(_full, new Int32Rect(where.X - _bounds.X, where.Y - _bounds.Y, where.Width, where.Height));
+        var crop = owner.Compose(ScreenCapture.Crop(_full, new Int32Rect(where.X - _bounds.X, where.Y - _bounds.Y, where.Width, where.Height)));
         CloseAll();
         switch (action)
         {
@@ -101,6 +101,17 @@ public sealed class CaptureSession
     }
 
     public void Cancel() => CloseAll();
+
+    /// <summary>Hands the selected region over to a long (scrolling) screenshot.</summary>
+    internal void StartLong(CaptureOverlay owner)
+    {
+        var region = owner.ScreenSelection();
+        CloseAll();
+        // let the overlays disappear before the first frame is grabbed
+        var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
+        t.Tick += (_, _) => { t.Stop(); LongShot.Start(region); };
+        t.Start();
+    }
 
     void CloseAll()
     {

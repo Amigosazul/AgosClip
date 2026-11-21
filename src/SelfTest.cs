@@ -74,6 +74,7 @@ internal static class SelfTest
                 Issue8To13Tests(app, outDir);
                 PasteContentionTest(app);
                 ScreenshotTests(app, outDir);
+                EditAndLongShotTests(outDir);
             }
             Seed(app);
             PlacementTests();
@@ -1414,11 +1415,11 @@ internal static class SelfTest
             Pump(300);
             Check(session.Overlays.Count == System.Windows.Forms.Screen.AllScreens.Length, $"one overlay per monitor ({session.Overlays.Count})");
             var o = session.Overlays[0];
-            o.SelectForTest(new Rect(120, 90, 300, 180));
+            o.SelectForTest(new Rect(520, 90, 300, 180)); // far enough right for the full-width toolbar
             Pump(200);
             var tb = o.Toolbar;
             double tbRight = System.Windows.Controls.Canvas.GetLeft(tb) + tb.ActualWidth, tbTop = System.Windows.Controls.Canvas.GetTop(tb);
-            Check(tb.IsVisible && Math.Abs(tbRight - 420) < 2 && Math.Abs(tbTop - 276) < 2,
+            Check(tb.IsVisible && Math.Abs(tbRight - 820) < 2 && Math.Abs(tbTop - 276) < 2,
                 $"toolbar sits at the selection's bottom-right ({tbRight:0},{tbTop:0})");
             Check(o.SizeText.Text == "300 × 180", $"selection size is shown in pixels ({o.SizeText.Text})");
             o.PinBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
@@ -1483,6 +1484,137 @@ internal static class SelfTest
             CaptureSession.Completed -= onDone;
             CaptureSession.Active?.Cancel();
             PinWindow.CloseAll();
+        }
+    }
+
+    static byte[] Bgra(BitmapSource b)
+    {
+        var c = new FormatConvertedBitmap(b, PixelFormats.Bgra32, null, 0);
+        var px = new byte[c.PixelWidth * 4 * c.PixelHeight];
+        c.CopyPixels(px, c.PixelWidth * 4, 0);
+        return px;
+    }
+
+    static void EditAndLongShotTests(string outDir)
+    {
+        // ── long screenshot stitching on a synthetic page whose every row is distinct ──
+        int W = 320, H = 2400, F = 400;
+        var rnd = new Random(7);
+        var page = new byte[W * 4 * H];
+        rnd.NextBytes(page);
+        for (int i = 3; i < page.Length; i += 4) page[i] = 255;
+        var tall = BitmapSource.Create(W, H, 96, 96, PixelFormats.Bgra32, null, page, W * 4);
+        BitmapSource Frame(int y, byte[]? header = null)
+        {
+            var f = new byte[W * 4 * F];
+            Buffer.BlockCopy(page, y * W * 4, f, 0, f.Length);
+            if (header != null) Buffer.BlockCopy(header, 0, f, 0, header.Length); // sticky bar drawn over the top
+            return BitmapSource.Create(W, F, 96, 96, PixelFormats.Bgra32, null, f, W * 4);
+        }
+        var st = new Stitcher(W, F);
+        int y0 = 0;
+        foreach (int step in new[] { 0, 130, 130, 170, 90, 200, 150 }) { y0 += step; st.Add(Frame(y0)); }
+        var res = Bgra(st.Result());
+        var expect = new byte[W * 4 * (y0 + F)];
+        Buffer.BlockCopy(page, 0, expect, 0, expect.Length);
+        Check(st.Height == y0 + F && res.SequenceEqual(expect), $"long screenshot stitches scrolled frames pixel-exactly ({st.Height} px)");
+        st.Add(Frame(y0)); st.Add(Frame(y0));
+        Check(st.StillFrames == 2 && st.Height == y0 + F, "no new rows once the page stops scrolling (end detected)");
+
+        var header = new byte[W * 4 * 40];
+        new Random(9).NextBytes(header);
+        for (int i = 3; i < header.Length; i += 4) header[i] = 255;
+        var st2 = new Stitcher(W, F);
+        int y1 = 0;
+        foreach (int step in new[] { 0, 120, 140, 160 }) { y1 += step; st2.Add(Frame(y1, header)); }
+        Check(st2.Height == y1 + F, $"a sticky header doesn't break the matching ({st2.Height} vs {y1 + F})");
+
+        var rw = LongShotResultWindow.Show(tall, new Int32Rect(0, 0, W, F));
+        Pump(300);
+        RenderOnGlass((FrameworkElement)rw.Content, Path.Combine(outDir, "longshot-result.png"), false, false);
+        rw.Close();
+
+        // ── text + mosaic + undo on a capture ──
+        var bounds = ScreenCapture.VirtualBounds();
+        var desk = FakeDesktop(bounds.Width, bounds.Height, false);
+        desk.Measure(new Size(bounds.Width, bounds.Height)); desk.Arrange(new Rect(0, 0, bounds.Width, bounds.Height));
+        var shot = new RenderTargetBitmap(bounds.Width, bounds.Height, 96, 96, PixelFormats.Pbgra32);
+        shot.Render(desk); shot.Freeze();
+        BitmapSource? result = null;
+        Action<CaptureAction, BitmapSource, Int32Rect> onDone = (_, img, _) => result = img;
+        CaptureSession.Completed += onDone;
+        try
+        {
+            var session = CaptureSession.StartWith(shot, bounds);
+            Pump(250);
+            var o = session.Overlays[0];
+            var sel = new Rect(40, 80, 360, 220);
+            o.SelectForTest(sel);
+            Pump(100);
+            Check(o.LongBtn.IsEnabled && !o.UndoBtn.IsEnabled, "fresh selection: 长截图 available, nothing to undo");
+
+            o.SetTool(CaptureOverlay.Tool.Text);
+            Pump(100);
+            Check(o.TextOptions.IsVisible && o.TextSizes.Children.Count == 5 && o.TextColors.Children.Count == 8, "文字 shows size and colour choices");
+            ((System.Windows.Controls.Button)o.TextSizes.Children[4]).RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent)); // 48
+            ((System.Windows.Controls.Button)o.TextColors.Children[4]).RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent)); // blue
+            o.BeginText(new Point(sel.X + 20, sel.Y + 40));
+            Pump(100);
+            o.TypeForTest("标注 Hello");
+            o.CommitText();
+            Check(o.AnnotationCount == 1 && !o.LongBtn.IsEnabled && o.UndoBtn.IsEnabled, "text becomes an annotation; 长截图 locks once marked up");
+
+            o.SetTool(CaptureOverlay.Tool.Mosaic);
+            Check(o.MosaicOptions.IsVisible && o.MosaicSizes.Children.Count == 3, "马赛克 shows 小 / 中 / 大");
+            ((System.Windows.Controls.Button)o.MosaicSizes.Children[2]).RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent)); // 大 = 20 px
+            o.BeginMosaic(new Point(sel.X + 60, sel.Y + 62)); // over the sample text, so the screenshot shows it
+            for (int i = 0; i <= 14; i++) o.PaintMosaic(new Point(sel.X + 60 + i * 10, sel.Y + 62));
+            o.EndMosaic();
+            Check(o.AnnotationCount == 2, "a mosaic stroke becomes an annotation");
+            var mimg = o.AnnoLayer.Children.OfType<System.Windows.Controls.Image>().Last();
+            Check(Math.Abs(mimg.Source.Width - o.Stage.ActualWidth) < 1 && Math.Abs(mimg.Source.Height - o.Stage.ActualHeight) < 1,
+                "the mosaic layer is anchored at the screen origin (drawn where the mouse was)");
+            Pump(150);
+            RenderOnGlass((FrameworkElement)o.Content, Path.Combine(outDir, "screenshot-edit.png"), false, false);
+
+            o.Undo();
+            Check(o.AnnotationCount == 1, "撤回 removes the last mark (mosaic)");
+            o.Undo();
+            Check(o.AnnotationCount == 0 && o.LongBtn.IsEnabled, "撤回 again removes the text; 长截图 is available again");
+
+            // redo both and copy: the copied picture must contain them
+            o.SetTool(CaptureOverlay.Tool.Text);
+            o.BeginText(new Point(sel.X + 20, sel.Y + 40)); Pump(50); o.TypeForTest("标注"); o.CommitText();
+            o.SetTool(CaptureOverlay.Tool.Mosaic);
+            o.BeginMosaic(new Point(sel.X + 200, sel.Y + 150)); o.PaintMosaic(new Point(sel.X + 260, sel.Y + 150)); o.EndMosaic();
+            o.Copy();
+            Pump(300);
+            Check(result != null && result.PixelWidth == 360 && result.PixelHeight == 220, "copy returns the selection size with marks");
+            if (result != null)
+            {
+                var plain = Bgra(ScreenCapture.Crop(shot, new Int32Rect(40, 80, 360, 220)));
+                var marked = Bgra(result);
+                int stride = 360 * 4;
+                bool Differs(int x0, int y0, int w, int h)
+                {
+                    for (int y = y0; y < y0 + h; y++) for (int x = x0; x < x0 + w; x++)
+                    { int i = y * stride + x * 4; if (Math.Abs(plain[i] - marked[i]) + Math.Abs(plain[i + 1] - marked[i + 1]) + Math.Abs(plain[i + 2] - marked[i + 2]) > 30) return true; }
+                    return false;
+                }
+                Check(Differs(20, 20, 120, 50), "the text is drawn into the copied picture");
+                // a mosaic cell (20 px grid in monitor coordinates) is one flat colour
+                int cellX = (240 / 20) * 20 - 40, cellY = (230 / 20) * 20 - 80; // cell containing (240,230) on screen, in crop coords
+                var first = (marked[cellY * stride + cellX * 4], marked[cellY * stride + cellX * 4 + 1], marked[cellY * stride + cellX * 4 + 2]);
+                bool flat = true;
+                for (int y = cellY; y < cellY + 20; y++) for (int x = cellX; x < cellX + 20; x++)
+                { int i = y * stride + x * 4; if ((marked[i], marked[i + 1], marked[i + 2]) != first) flat = false; }
+                Check(flat, "mosaic cells in the copied picture are flat blocks (the content underneath is gone)");
+            }
+        }
+        finally
+        {
+            CaptureSession.Completed -= onDone;
+            CaptureSession.Active?.Cancel();
         }
     }
 }

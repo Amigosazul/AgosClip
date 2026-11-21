@@ -61,9 +61,19 @@ public partial class PinWindow : Window
         Closed += (_, _) => Open_.Remove(this);
     }
 
-    public static PinWindow Open(BitmapSource image, Int32Rect where, bool onTop)
+    /// <param name="fitScreen">Long screenshots: start zoomed out so the whole picture fits on the screen.</param>
+    public static PinWindow Open(BitmapSource image, Int32Rect where, bool onTop, bool fitScreen = false)
     {
         var w = new PinWindow(image, where, onTop);
+        if (fitScreen)
+        {
+            var wa = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point(where.X + 10, where.Y + 10)).WorkingArea;
+            w._zoom = Math.Min(1, Math.Min((wa.Height * 0.9) / image.PixelHeight, (wa.Width * 0.9) / image.PixelWidth));
+            int ww = (int)(image.PixelWidth * w._zoom), hh = (int)(image.PixelHeight * w._zoom);
+            w._x = Math.Clamp(where.X, wa.Left, Math.Max(wa.Left, wa.Right - ww));
+            w._y = Math.Clamp(where.Y, wa.Top, Math.Max(wa.Top, wa.Bottom - hh));
+            w.ApplySize();
+        }
         Open_.Add(w);
         w.Show();
         w.Activate();
@@ -132,7 +142,10 @@ public partial class PinWindow : Window
         return mi;
     }
 
-    void Save()
+    void Save() => SaveImage(this, _image);
+
+    /// <summary>Save-as dialog for a picture (PNG). Returns true if saved.</summary>
+    public static bool SaveImage(Window owner, BitmapSource image)
     {
         var dlg = new Microsoft.Win32.SaveFileDialog
         {
@@ -141,9 +154,9 @@ public partial class PinWindow : Window
             Filter = "PNG 图片|*.png",
             InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
         };
-        if (dlg.ShowDialog(this) == true)
-            try { File.WriteAllBytes(dlg.FileName, ScreenCapture.Png(_image)); }
-            catch (Exception ex) { MessageBox.Show(this, "保存失败：" + ex.Message, "AgosClip"); }
+        if (dlg.ShowDialog(owner) != true) return false;
+        try { File.WriteAllBytes(dlg.FileName, ScreenCapture.Png(image)); return true; }
+        catch (Exception ex) { MessageBox.Show(owner, "保存失败：" + ex.Message, "AgosClip"); return false; }
     }
 
     void Top_Click(object sender, RoutedEventArgs e) => SetOnTop(!OnTop);
