@@ -75,6 +75,7 @@ internal static class SelfTest
                 PasteContentionTest(app);
                 ScreenshotTests(app, outDir);
                 EditAndLongShotTests(outDir);
+                LongShotFlowTests();
             }
             Seed(app);
             PlacementTests();
@@ -1615,6 +1616,102 @@ internal static class SelfTest
         {
             CaptureSession.Completed -= onDone;
             CaptureSession.Active?.Cancel();
+        }
+    }
+
+    /// <summary>The long-screenshot loop on a fake page: auto wheel, posted wheel, manual, and a too-fast scroll.</summary>
+    static void LongShotFlowTests()
+    {
+        int W = 300, H = 3000, F = 300;
+        var page = new byte[W * 4 * H];
+        new Random(11).NextBytes(page);
+        for (int i = 3; i < page.Length; i += 4) page[i] = 255;
+        int offset = 0;
+        BitmapSource Grab(Int32Rect _)
+        {
+            var f = new byte[W * 4 * F];
+            Buffer.BlockCopy(page, offset * W * 4, f, 0, f.Length);
+            return BitmapSource.Create(W, F, 96, 96, PixelFormats.Bgra32, null, f, W * 4);
+        }
+        void Down(int px) => offset = Math.Clamp(offset + px, 0, H - F);
+        var region = new Int32Rect(0, 0, W, F);
+        var tick = TimeSpan.FromMilliseconds(40);
+
+        BitmapSource? result = null;
+        Action<BitmapSource> onDone = r => result = r;
+        LongShot.Finished += onDone;
+        try
+        {
+            BitmapSource? RunUntilDone(int maxMs, Action? eachPump = null)
+            {
+                result = null;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                while (result == null && sw.ElapsedMilliseconds < maxMs) { eachPump?.Invoke(); Pump(40); }
+                return result;
+            }
+            byte[] Rows(int count) { var b = new byte[W * 4 * count]; Buffer.BlockCopy(page, 0, b, 0, b.Length); return b; }
+
+            // A: real wheel input scrolls → auto mode reaches the bottom and stops by itself
+            offset = 0;
+            var a = LongShot.StartForTest(region, Grab, m => { if (m == LongShot.ScrollMethod.Wheel) Down(100); return true; }, tick);
+            var ra = RunUntilDone(20000);
+            Check(ra != null && ra.PixelHeight == H && Bgra(ra).SequenceEqual(Rows(H)) && a.Method == LongShot.ScrollMethod.Wheel,
+                $"long shot A: wheel works → whole page stitched and stopped at the end ({ra?.PixelHeight} px)");
+
+            // B: wheel input ignored, posted WM_MOUSEWHEEL works → switches and still captures everything
+            offset = 0;
+            var b = LongShot.StartForTest(region, Grab, m => { if (m == LongShot.ScrollMethod.PostedWheel) Down(100); return true; }, tick);
+            var rb = RunUntilDone(20000);
+            Check(rb != null && rb.PixelHeight == H && b.Method == LongShot.ScrollMethod.PostedWheel,
+                $"long shot B: falls back to posted wheel messages ({b.Method}, {rb?.PixelHeight} px)");
+
+            // E: a wheel notch jumps further than the region is tall → small ↓ steps take over
+            offset = 0;
+            var e = LongShot.StartForTest(region, Grab, m => { Down(m switch { LongShot.ScrollMethod.Keys => 60, LongShot.ScrollMethod.KeysUp => -60, _ => 400 }); return true; }, tick);
+            var re = RunUntilDone(30000);
+            Check(re != null && re.PixelHeight == H && Bgra(re).SequenceEqual(Rows(H)) && e.Method == LongShot.ScrollMethod.Keys,
+                $"long shot E: too-big wheel steps switch to ↓ keys and still capture the whole page ({e.Method}, {re?.PixelHeight} px)");
+
+            // F: wheel and posted wheel do nothing, keys work
+            offset = 0;
+            var f2 = LongShot.StartForTest(region, Grab, m => { if (m == LongShot.ScrollMethod.Keys) Down(60); return true; }, tick);
+            var rf = RunUntilDone(30000);
+            Check(rf != null && rf.PixelHeight == H && f2.Method == LongShot.ScrollMethod.Keys, $"long shot F: falls through to ↓ keys ({f2.Method})");
+
+            // C: nothing scrolls the app → manual mode, follows the user's own scrolling, never stops by itself
+            offset = 0;
+            var c = LongShot.StartForTest(region, Grab, _ => true, tick);
+            Pump(700);
+            Check(c.Method == LongShot.ScrollMethod.Manual && LongShot.IsActive && c.Status.Contains("滚轮"),
+                $"long shot C: switches to manual mode and asks the user to scroll ({c.Status})");
+            for (int i = 0; i < 12; i++) { Down(90); Pump(60); }
+            Pump(500); // standing still for a while must NOT end a manual capture
+            Check(LongShot.IsActive, "manual mode doesn't stop on its own while the user pauses");
+            int expectC = offset + F;
+            c.Stop(keep: true);
+            Pump(50);
+            Check(result != null && result.PixelHeight == expectC && Bgra(result).SequenceEqual(Rows(expectC)),
+                $"manual mode stitches exactly what the user scrolled through ({result?.PixelHeight} px)");
+
+            // D: a jump bigger than the region can't be matched → hint, no gap; scrolling back recovers
+            offset = 0;
+            var d = LongShot.StartForTest(region, Grab, _ => true, tick);
+            Pump(700);                       // → manual
+            Down(100); Pump(120);
+            Down(400); Pump(120);            // too far: nothing overlaps
+            Check(d.Status.Contains("滚得太快") && d.Stitch.Lost > 0, "a too-fast scroll shows a hint instead of gluing a gap");
+            Down(-250); Pump(120);           // back into overlap
+            Down(100); Pump(120);
+            int expectD = offset + F;
+            d.Stop(keep: true);
+            Pump(50);
+            Check(result != null && result.PixelHeight == expectD && Bgra(result).SequenceEqual(Rows(expectD)),
+                $"after scrolling back a little it continues seamlessly ({result?.PixelHeight} px)");
+        }
+        finally
+        {
+            LongShot.Finished -= onDone;
+            LongShot.Active?.Stop(keep: false);
         }
     }
 }

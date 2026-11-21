@@ -20,6 +20,10 @@ public sealed class Stitcher
     public int Width => _w;
     /// <summary>Consecutive frames that brought nothing new (the bottom was reached).</summary>
     public int StillFrames { get; private set; }
+    /// <summary>The content has moved at least once (so "still" afterwards means the end was reached).</summary>
+    public bool Moved { get; private set; }
+    /// <summary>Frames that couldn't be matched to the previous one (scrolled too far in one go).</summary>
+    public int Lost { get; private set; }
 
     public Stitcher(int width, int height)
     {
@@ -59,7 +63,7 @@ public sealed class Stitcher
     }
 
     /// <summary>
-    /// Adds a frame. Returns how many new rows were appended (0 = nothing moved).
+    /// Adds a frame. Returns how many new rows were appended (0 = nothing moved, -1 = no overlap found).
     /// </summary>
     public int Add(BitmapSource frame)
     {
@@ -73,9 +77,17 @@ public sealed class Stitcher
             return _h;
         }
         int shift = FindShift(_prevHashes, hashes);
+        if (shift < 0)
+        {
+            // jumped further than the region's height (or scrolled back up): nothing overlaps, so keep
+            // comparing against the last frame that did match instead of gluing on a gap
+            Lost++;
+            return -1;
+        }
         _prevHashes = hashes;
-        if (shift <= 0) { StillFrames++; return 0; }
+        if (shift == 0) { StillFrames++; return 0; }
         StillFrames = 0;
+        Moved = true;
         for (int y = _h - shift; y < _h; y++) _rows.Add(Row(px, y));
         return shift;
     }
@@ -96,7 +108,7 @@ public sealed class Stitcher
     {
         int h = prev.Length;
         if (Same(prev, cur)) return 0;
-        int minOverlap = Math.Max(8, h / 8);
+        int minOverlap = Math.Max(6, h / 12); // small regions + a big wheel step leave only a thin overlap
         int best = -1;
         double bestScore = 0;
         for (int d = 1; d <= h - minOverlap; d++)
