@@ -101,7 +101,16 @@ internal static class Native
         u = new InputUnion { ki = new KEYBDINPUT { wVk = vk, dwFlags = up ? KEYEVENTF_KEYUP : 0, dwExtraInfo = OurInjectionTag } }
     };
 
-    public static void Send(params INPUT[] inputs) => SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    /// <summary>The Win keys are extended keys; without the flag the injected key-up can be taken for another key.</summary>
+    public static INPUT WinKey(ushort vk, bool up)
+    {
+        var i = Key(vk, up);
+        i.u.ki.dwFlags |= 0x0001; // KEYEVENTF_EXTENDEDKEY
+        return i;
+    }
+
+    /// <summary>Returns how many events were injected (fewer than asked = blocked).</summary>
+    public static uint Send(params INPUT[] inputs) => SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
 
     /// <summary>Brings a window to the foreground even when Windows' focus-stealing rules would refuse.</summary>
     [DllImport("user32.dll")] public static extern bool IsHungAppWindow(IntPtr hwnd);

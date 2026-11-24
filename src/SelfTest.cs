@@ -67,6 +67,7 @@ internal static partial class SelfTest
             if (!animationOnly)
             {
                 StoreTests(app.Store);
+                WinVKeyTests();
                 ClipboardTests(app);
                 MoveTests(app);
                 FeedbackTests(app);
