@@ -13,7 +13,7 @@
     <RootNamespace>AgosClip</RootNamespace>
     <ApplicationIcon>Assets\AgosClip.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.10.0</Version>
+    <Version>1.11.0</Version>
     <Product>AgosClip</Product>
     <Description>AgosClip 剪贴板历史</Description>
     <Copyright>AgosClip</Copyright>
@@ -26,6 +26,9 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+    <!-- managed wrapper only: onnxruntime.dll and the models come with the OCR plugin (Plugins.cs) -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.22.0" />
   </ItemGroup>
 
   <ItemGroup>

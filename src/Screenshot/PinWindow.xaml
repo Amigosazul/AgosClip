@@ -44,7 +44,7 @@
         </StackPanel>
         <Border x:Name="ZoomBadge" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6" Background="#B31E1E20"
                 CornerRadius="5" Padding="6,2" Visibility="Collapsed" IsHitTestVisible="False">
-            <TextBlock x:Name="ZoomText" Foreground="White" FontSize="11.5"/>
+            <TextBlock x:Name="ZoomText" Foreground="White" FontSize="11.5" TextWrapping="Wrap"/>
         </Border>
     </Grid>
 </Window>

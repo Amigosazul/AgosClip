@@ -21,7 +21,10 @@ public partial class PinWindow : Window
     static readonly List<PinWindow> Open_ = new();
     public static IReadOnlyList<PinWindow> All => Open_;
 
-    readonly BitmapSource _image;
+    BitmapSource _image;              // what is shown (the translation once there is one)
+    readonly BitmapSource _original;
+    BitmapSource? _translated;
+    System.Threading.CancellationTokenSource? _translating;
     readonly IntPtr _hwnd;
     double _zoom = 1;
     int _x, _y;
@@ -33,7 +36,7 @@ public partial class PinWindow : Window
     PinWindow(BitmapSource image, Int32Rect where, bool onTop)
     {
         InitializeComponent();
-        _image = image;
+        _image = _original = image;
         Picture.Source = image;
         _hwnd = new WindowInteropHelper(this).EnsureHandle();
         (_x, _y) = (where.X, where.Y);
@@ -58,7 +61,8 @@ public partial class PinWindow : Window
         };
         _badgeTimer.Tick += (_, _) => { _badgeTimer.Stop(); ZoomBadge.Visibility = Visibility.Collapsed; };
         ContextMenu = BuildMenu();
-        Closed += (_, _) => Open_.Remove(this);
+        Closed += (_, _) => { Open_.Remove(this); _translating?.Cancel(); };
+        ContextMenuOpening += (_, _) => RefreshMenu();
     }
 
     /// <param name="fitScreen">Long screenshots: start zoomed out so the whole picture fits on the screen.</param>
@@ -117,6 +121,7 @@ public partial class PinWindow : Window
         ZoomText.Text = $"{_zoom * 100:0}%";
         ZoomBadge.Visibility = Visibility.Visible;
         _badgeTimer.Stop();
+        _badgeTimer.Interval = TimeSpan.FromMilliseconds(900);
         _badgeTimer.Start();
     }
 
@@ -130,9 +135,77 @@ public partial class PinWindow : Window
         m.Items.Add(Item("另存为…", Save));
         m.Items.Add(Item("原始大小", () => { _zoom = 1; ApplySize(); }));
         m.Items.Add(new Separator());
+        _ocrItem = Item("识别文字", () => TextToolWindow.ShowOcr(_image, ScreenRect()));
+        _translateItem = Item("翻译图片", TranslateInPlace);
+        _swapItem = Item("显示原图", () => ShowImage(_image == _original ? _translated : _original));
+        m.Items.Add(_ocrItem);
+        m.Items.Add(_translateItem);
+        m.Items.Add(_swapItem);
+        m.Items.Add(new Separator());
         m.Items.Add(Item("关闭", Close));
         m.Items.Add(Item("关闭所有钉图", CloseAll));
         return m;
+    }
+
+    MenuItem? _ocrItem, _translateItem, _swapItem;
+
+    void RefreshMenu()
+    {
+        bool ocr = RapidOcr.Available;
+        if (_ocrItem != null) _ocrItem.Visibility = ocr ? Visibility.Visible : Visibility.Collapsed;
+        if (_translateItem != null)
+        {
+            _translateItem.Visibility = ocr && App.Current.Settings.EnableTranslate && _translated == null ? Visibility.Visible : Visibility.Collapsed;
+            _translateItem.IsEnabled = _translating == null;
+        }
+        if (_swapItem != null)
+        {
+            _swapItem.Visibility = _translated != null ? Visibility.Visible : Visibility.Collapsed;
+            _swapItem.Header = _image == _original ? "显示译文" : "显示原图";
+        }
+    }
+
+    /// <summary>Where the pin is on screen (physical px), so a result window can open beside it.</summary>
+    Rect ScreenRect() => Native.GetWindowRect(_hwnd, out var r) ? new Rect(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top) : Rect.Empty;
+
+    /// <summary>Swaps the picture (same pixel size), keeping position and zoom.</summary>
+    void ShowImage(BitmapSource? img)
+    {
+        if (img == null) return;
+        _image = img;
+        Picture.Source = img;
+    }
+
+    void Badge(string text, bool stay)
+    {
+        ZoomText.Text = text;
+        ZoomBadge.Visibility = Visibility.Visible;
+        _badgeTimer.Stop();
+        if (!stay) { _badgeTimer.Interval = TimeSpan.FromSeconds(4); _badgeTimer.Start(); }
+    }
+
+    /// <summary>Recognises the text, translates it and shows the picture with the translation written in.</summary>
+    public async void TranslateInPlace()
+    {
+        if (_translating != null) return;
+        if (!RapidOcr.Available) { Badge("请先在 设置 → 插件 里安装文字识别", false); return; }
+        _translating = new System.Threading.CancellationTokenSource();
+        Badge("正在翻译…", true);
+        try
+        {
+            var r = await ImageTranslator.TranslateAsync(_original, App.Current.Settings.TranslateTarget, _translating.Token);
+            _translated = r.Image;
+            ShowImage(_translated);
+            Badge($"{r.Engine} · 译为{Translator.NameOf(r.Target)} · 右键可看原图", false);
+            App.Log($"pin translate: {r.Blocks} blocks via {r.Engine}");
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            App.Log("pin translate failed: " + ex.Message);
+            Badge("翻译失败：" + ex.Message, false);
+        }
+        finally { _translating = null; }
     }
 
     static MenuItem Item(string header, Action a)

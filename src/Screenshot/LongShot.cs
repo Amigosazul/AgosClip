@@ -69,7 +69,7 @@ public sealed class LongShot
         return _active;
     }
 
-    static Window Floating(UIElement content, bool clickThrough)
+    internal static Window Floating(UIElement content, bool clickThrough)
     {
         var w = new Window
         {
@@ -85,10 +85,10 @@ public sealed class LongShot
         return w;
     }
 
-    static void PlaceAt(Window w, int x, int y) =>
+    internal static void PlaceAt(Window w, int x, int y) =>
         Native.SetWindowPos(new WindowInteropHelper(w).Handle, new IntPtr(-1), x, y, 0, 0, 0x0001 | 0x0010);
 
-    static (int W, int H) SizeOf(Window w)
+    internal static (int W, int H) SizeOf(Window w)
     {
         w.UpdateLayout();
         Native.GetWindowRect(new WindowInteropHelper(w).Handle, out var r);

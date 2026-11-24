@@ -7,7 +7,10 @@ using System.Windows.Threading;
 
 namespace AgosClip;
 
-public enum CaptureAction { Copy, PinOnTop, PinNormal }
+public enum CaptureAction { Copy, PinOnTop, PinNormal, Record, Ocr, Translate }
+
+/// <summary>Shot = screenshot (copy / pin / long); Record = pick the region for a screen recording.</summary>
+public enum CaptureMode { Shot, Record }
 
 /// <summary>One screenshot: freeze the screen, show a selection overlay per monitor, then copy or pin.</summary>
 public sealed class CaptureSession
@@ -18,15 +21,16 @@ public sealed class CaptureSession
     Int32Rect _bounds;
 
     public static bool IsActive => _active != null;
+    public CaptureMode Mode { get; private set; }
 
     /// <summary>Raised after a copy/pin with the cropped image (self-test hook).</summary>
     internal static event Action<CaptureAction, BitmapSource, Int32Rect>? Completed;
 
     /// <summary>Starts a capture (ignored while one is already open).</summary>
-    public static void Start()
+    public static void Start(CaptureMode mode = CaptureMode.Shot)
     {
         if (_active != null) return;
-        var s = new CaptureSession();
+        var s = new CaptureSession { Mode = mode };
         _active = s;
         try { s.Open(); }
         catch (Exception ex)
@@ -37,9 +41,9 @@ public sealed class CaptureSession
     }
 
     /// <summary>Self-test: run the whole flow on a given picture instead of a real screen grab.</summary>
-    internal static CaptureSession StartWith(BitmapSource full, Int32Rect bounds)
+    internal static CaptureSession StartWith(BitmapSource full, Int32Rect bounds, CaptureMode mode = CaptureMode.Shot)
     {
-        var s = new CaptureSession();
+        var s = new CaptureSession { Mode = mode };
         _active = s;
         s.Show(full, bounds);
         return s;
@@ -92,6 +96,13 @@ public sealed class CaptureSession
             case CaptureAction.Copy:
                 if (!ScreenCapture.CopyToClipboard(crop)) App.Log("screenshot: copy failed");
                 break;
+            case CaptureAction.Ocr:
+                if (Completed == null) TextToolWindow.ShowOcr(crop, new Rect(where.X, where.Y, where.Width, where.Height));
+                break;
+            case CaptureAction.Translate:
+                // pinned where it was taken; the translation replaces the picture when it arrives
+                if (Completed == null) PinWindow.Open(crop, where, onTop: true).TranslateInPlace();
+                break;
             default:
                 PinWindow.Open(crop, where, onTop: action == CaptureAction.PinOnTop);
                 break;
@@ -101,6 +112,19 @@ public sealed class CaptureSession
     }
 
     public void Cancel() => CloseAll();
+
+    /// <summary>Record mode: hand the selected region (or the whole monitor) to the screen recorder.</summary>
+    internal void StartRecording(CaptureOverlay owner, bool wholeMonitor)
+    {
+        var region = wholeMonitor ? owner.MonitorRect : owner.ScreenSelection();
+        CloseAll();
+        App.Log($"recording: region {region.Width}x{region.Height}{(wholeMonitor ? " (whole monitor)" : "")}");
+        if (Completed != null) { Completed(CaptureAction.Record, null!, region); return; }
+        // let the overlays disappear before the first frame is grabbed
+        var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
+        t.Tick += (_, _) => { t.Stop(); ScreenRecorder.Start(region); };
+        t.Start();
+    }
 
     /// <summary>Hands the selected region over to a long (scrolling) screenshot.</summary>
     internal void StartLong(CaptureOverlay owner)

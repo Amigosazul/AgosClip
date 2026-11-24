@@ -16,9 +16,10 @@ namespace AgosClip;
 
 /// <param name="Sha256">Expected hash from a trusted channel (GitHub API digest or the repo's latest.json via jsDelivr).</param>
 public sealed record UpdateInfo(Version Version, string Notes, string FileName, string? Sha256, long Size,
-                                string PageUrl, IReadOnlyList<string> Mirrors)
+                                string PageUrl, IReadOnlyList<string> Mirrors, string? Url = null)
 {
-    public string DirectUrl => $"https://github.com/{Updater.Repo}/releases/download/v{Version.ToString(3)}/{FileName}";
+    /// <summary>The GitHub download URL; plugins pass their own (they live under a separate release tag).</summary>
+    public string DirectUrl => Url ?? $"https://github.com/{Updater.Repo}/releases/download/v{Version.ToString(3)}/{FileName}";
 }
 
 public sealed record DownloadProgress(double Fraction, string Source, double BytesPerSecond, string? Note = null);
@@ -39,7 +40,7 @@ public static class Updater
     public static string ReleasesPage => $"https://github.com/{Repo}/releases";
 
     /// <summary>Built-in mirror prefixes (verified reachable from mainland China, 2026-11). latest.json can override.</summary>
-    static readonly string[] DefaultMirrors = { "https://ghfast.top/", "https://gh-proxy.com/", "https://ghproxy.net/" };
+    internal static readonly string[] DefaultMirrors = { "https://ghfast.top/", "https://gh-proxy.com/", "https://ghproxy.net/" };
 
     static readonly string[] LatestJsonUrls =
     {
@@ -215,12 +216,13 @@ public static class Updater
     /// Downloads the installer to %TEMP% (resuming a previous partial download), switching sources when one
     /// stalls, then verifies its SHA-256. Returns the local path.
     /// </summary>
-    public static async Task<string> DownloadAsync(UpdateInfo u, IProgress<DownloadProgress>? progress, CancellationToken ct = default)
+    /// <param name="dir">Where to put the file; default %TEMP%\AgosClip-Update.</param>
+    public static async Task<string> DownloadAsync(UpdateInfo u, IProgress<DownloadProgress>? progress, CancellationToken ct = default, string? dir = null)
     {
         progress?.Report(new DownloadProgress(0, "", 0, "正在测试各下载线路的速度…"));
         var ranked = await Probe(u, ct);
         if (ranked.Count == 0) throw new HttpRequestException("所有下载线路都连不上");
-        _lastBest = (ranked[0].Name, ranked[0].Url);
+        if (u.Url == null) _lastBest = (ranked[0].Name, ranked[0].Url); // only the installer's "用浏览器下载" uses it
 
         string? expected = u.Sha256;
         if (expected == null)
@@ -240,7 +242,7 @@ public static class Updater
         }
         if (expected == null || expected.Length != 64) throw new InvalidDataException("拿不到安装包的校验值，为安全起见不下载。");
 
-        var dir = Path.Combine(Path.GetTempPath(), "AgosClip-Update");
+        dir ??= Path.Combine(Path.GetTempPath(), "AgosClip-Update");
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, u.FileName);
         var part = path + ".part";

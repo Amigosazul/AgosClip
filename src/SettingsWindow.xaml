@@ -242,6 +242,8 @@
                     <ListBoxItem Tag="&#xE713;" Content="通用"/>
                     <ListBoxItem Tag="&#xE81C;" Content="记录"/>
                     <ListBoxItem Tag="&#xE722;" Content="截图"/>
+                    <ListBoxItem Tag="&#xE714;" Content="录屏"/>
+                    <ListBoxItem Tag="&#xEA86;" Content="插件"/>
                     <ListBoxItem Tag="&#xE8B7;" Content="存储与日志"/>
                     <ListBoxItem Tag="&#xE895;" Content="更新"/>
                     <ListBoxItem Tag="&#xE946;" Content="关于与反馈"/>
@@ -334,6 +336,121 @@
                     </Border>
                 </StackPanel>
 
+                <!-- 录屏 -->
+                <StackPanel x:Name="PageRecord" Visibility="Collapsed">
+                    <TextBlock Text="录屏" Style="{StaticResource PageTitle}"/>
+                    <Border Style="{StaticResource Section}">
+                        <StackPanel>
+                            <CheckBox x:Name="EnableRecording" Style="{StaticResource Switch}" Click="Changed" Margin="0,2"
+                                      Content="启用屏幕录制" Tag="框选屏幕区域录成 MP4 视频，可以同时录声音"/>
+                            <StackPanel x:Name="RecordOptions">
+                                <Border Style="{StaticResource Sep}"/>
+                                <Grid Margin="0,4,0,2">
+                                    <StackPanel VerticalAlignment="Center" Margin="0,0,180,0">
+                                        <TextBlock Text="录屏快捷键"/>
+                                        <TextBlock x:Name="RecHotkeyStatus" Style="{StaticResource Hint}" Text="按一次开始选区域，录制中再按一次结束并保存"/>
+                                    </StackPanel>
+                                    <Border x:Name="RecHotkeyBox" HorizontalAlignment="Right" VerticalAlignment="Center" MinWidth="160"
+                                            Focusable="True" Cursor="Hand" CornerRadius="7" Padding="12,6" BorderThickness="1"
+                                            Background="{DynamicResource Track}" BorderBrush="{DynamicResource CardBorder}"
+                                            MouseLeftButtonDown="HotkeyBox_Click" PreviewKeyDown="HotkeyBox_KeyDown" LostKeyboardFocus="HotkeyBox_LostFocus"
+                                            FocusVisualStyle="{x:Null}">
+                                        <TextBlock x:Name="RecHotkeyText" HorizontalAlignment="Center" FontWeight="SemiBold"/>
+                                    </Border>
+                                </Grid>
+                                <Border Style="{StaticResource Sep}"/>
+                                <TextBlock Text="帧率" Margin="0,4,0,6"/>
+                                <WrapPanel x:Name="RecordFps"/>
+                                <TextBlock Style="{StaticResource Hint}" Text="30 帧够用，文件也小；录游戏或动画可以选 60 帧" Margin="0,0,0,2"/>
+                                <Border Style="{StaticResource Sep}"/>
+                                <CheckBox x:Name="RecordCursor" Style="{StaticResource Switch}" Click="Changed" Margin="0,2"
+                                          Content="录制鼠标指针" Tag="关闭后视频里看不到鼠标"/>
+                                <Border Style="{StaticResource Sep}"/>
+                                <CheckBox x:Name="RecordSystemAudio" Style="{StaticResource Switch}" Click="Changed" Margin="0,2"
+                                          Content="录制系统声音" Tag="电脑正在播放的声音：视频、音乐、会议里对方说话"/>
+                                <Border Style="{StaticResource Sep}"/>
+                                <CheckBox x:Name="RecordMic" Style="{StaticResource Switch}" Click="Changed" Margin="0,2"
+                                          Content="录制麦克风" Tag="用默认麦克风录你说话的声音，和系统声音混在一起"/>
+                                <Border Style="{StaticResource Sep}"/>
+                                <CheckBox x:Name="RecordCopyFile" Style="{StaticResource Switch}" Click="Changed" Margin="0,2"
+                                          Content="录完自动复制视频文件" Tag="可以直接粘贴到微信、QQ 或文件夹里"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Section}">
+                        <Grid>
+                            <StackPanel VerticalAlignment="Center" Margin="0,0,180,0">
+                                <TextBlock Text="保存位置"/>
+                                <TextBlock x:Name="RecordPath" Style="{StaticResource Hint}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Button Style="{StaticResource Btn}" Content="打开" Click="OpenRecordFolder_Click"/>
+                                <Button Style="{StaticResource Btn}" Content="更改…" Click="ChangeRecordFolder_Click" Margin="0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Style="{StaticResource Section}">
+                        <Grid>
+                            <StackPanel VerticalAlignment="Center" Margin="0,0,120,0">
+                                <TextBlock Text="使用方法"/>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="拖动选择区域后点「开始录制」；不选区域直接按 Enter 录整个屏幕。录制时区域外有红框和控制条，可以暂停、结束保存或放弃，它们不会被录进视频。"/>
+                            </StackPanel>
+                            <Button x:Name="RecordNowBtn" Style="{StaticResource Btn}" Content="现在录屏" Click="RecordNow_Click" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0"/>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+                <!-- 插件 -->
+                <StackPanel x:Name="PagePlugins" Visibility="Collapsed">
+                    <TextBlock Text="插件" Style="{StaticResource PageTitle}"/>
+                    <Border Style="{StaticResource Section}">
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock Text="文字识别" Style="{StaticResource Heading}" Margin="0,0,0,4"/>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+                                    <Ellipse x:Name="OcrDot" Width="7" Height="7" Fill="{DynamicResource SubFg}" VerticalAlignment="Center" Margin="0,1,6,0"/>
+                                    <TextBlock x:Name="OcrState" Text="未安装" FontSize="12"/>
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock x:Name="OcrDesc" Style="{StaticResource Hint}"/>
+                            <Border x:Name="OcrProgressTrack" Height="6" CornerRadius="3" Background="{DynamicResource Track}"
+                                    Margin="0,10,0,0" Visibility="Collapsed">
+                                <Border x:Name="OcrProgressFill" HorizontalAlignment="Left" Width="0" CornerRadius="3" Background="{DynamicResource Accent}"/>
+                            </Border>
+                            <TextBlock x:Name="OcrStatus" Style="{StaticResource Hint}" Foreground="{DynamicResource Accent}" Visibility="Collapsed" Margin="0,6,0,0"/>
+                            <WrapPanel Margin="0,10,0,0">
+                                <Button x:Name="OcrInstallBtn" Style="{StaticResource Btn}" Content="安装" Click="OcrInstall_Click"/>
+                                <Button x:Name="OcrReinstallBtn" Style="{StaticResource Btn}" Content="重新安装" Click="OcrReinstall_Click"/>
+                                <Button x:Name="OcrUninstallBtn" Style="{StaticResource Btn}" Content="卸载" Click="OcrUninstall_Click"/>
+                            </WrapPanel>
+                            <Border Style="{StaticResource Sep}" Margin="0,12,0,6"/>
+                            <CheckBox x:Name="OcrAutoCopy" Style="{StaticResource Switch}" Click="Changed" Margin="0,2"
+                                      Content="识别后自动复制文字" Tag="不用再点「复制原文」，识别完就能直接粘贴"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Section}">
+                        <StackPanel>
+                            <CheckBox x:Name="EnableTranslate" Style="{StaticResource Switch}" Click="Changed" Margin="0,2"
+                                      Content="翻译" Tag="文本翻译和图片翻译（图片翻译需要先安装文字识别）。只有点「翻译」时才会把文字发给翻译服务"/>
+                            <StackPanel x:Name="TranslateOptions">
+                                <Border Style="{StaticResource Sep}"/>
+                                <TextBlock Text="默认译为" Margin="0,4,0,6"/>
+                                <WrapPanel x:Name="TranslateTargets"/>
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,2"
+                                           Text="免费接口：优先用谷歌翻译（国内需要代理，会自动使用系统代理）；连不上时自动换 MyMemory，不用代理，但每天只有约 5000 字的免费额度。"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Section}">
+                        <StackPanel>
+                            <TextBlock Text="在哪里用"/>
+                            <TextBlock Style="{StaticResource Hint}"
+                                       Text="截图时工具栏会多出「识字」和「翻译」；钉图右键可以识别文字或翻译图片；剪贴板记录按空格打开预览，图片可以识别文字，文本可以翻译。"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
                 <!-- 存储与日志 -->
                 <StackPanel x:Name="PageStorage" Visibility="Collapsed">
                     <TextBlock Text="存储与日志" Style="{StaticResource PageTitle}"/>
@@ -402,7 +519,7 @@
                     <Border Style="{StaticResource Section}">
                         <StackPanel>
                             <TextBlock x:Name="AboutVersion" FontWeight="SemiBold"/>
-                            <TextBlock Style="{StaticResource Hint}" Text="剪贴板数据只保存在本机，只有检查更新时会联网。"/>
+                            <TextBlock Style="{StaticResource Hint}" Text="剪贴板数据只保存在本机。只有检查更新、下载插件和你点「翻译」时才会联网。"/>
                         </StackPanel>
                     </Border>
                     <Border Style="{StaticResource Section}">

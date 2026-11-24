@@ -59,7 +59,30 @@ public partial class SettingsWindow : Window
         RecordImages.IsChecked = S.RecordImages;
         ShowDateCards.IsChecked = S.ShowDateCards;
         EnableScreenshot.IsChecked = S.EnableScreenshot;
+        EnableRecording.IsChecked = S.EnableRecording;
+        RecordCursor.IsChecked = S.RecordCursor;
+        RecordSystemAudio.IsChecked = S.RecordSystemAudio;
+        RecordMic.IsChecked = S.RecordMic;
+        RecordCopyFile.IsChecked = S.RecordCopyFile;
+        foreach (var fps in new[] { 15, 30, 60 }.Union(new[] { S.RecordFps }).OrderBy(x => x))
+        {
+            var chip = new RadioButton { Style = (Style)Resources["Chip"], GroupName = "fps", Content = $"{fps} 帧", Tag = fps, IsChecked = fps == S.RecordFps };
+            chip.Checked += Fps_Changed;
+            RecordFps.Children.Add(chip);
+        }
+        ShowRecordFolder();
         ShowHotkey();
+        OcrAutoCopy.IsChecked = S.OcrAutoCopy;
+        EnableTranslate.IsChecked = S.EnableTranslate;
+        foreach (var t in Translator.Targets)
+        {
+            var chip = new RadioButton { Style = (Style)Resources["Chip"], GroupName = "translate", Content = t.Name, Tag = t.Code, IsChecked = t.Code == S.TranslateTarget };
+            chip.Checked += Target_Changed;
+            TranslateTargets.Children.Add(chip);
+        }
+        ShowPlugins();
+        Plugins.Changed += ShowPlugins;
+        Closed += (_, _) => { Plugins.Changed -= ShowPlugins; _ocrInstall?.Cancel(); };
         GlassBox.IsChecked = S.Glass;
         GlassBox.IsEnabled = Glass.Supported;
         if (!Glass.Supported) GlassBox.Tag = "这台电脑的 Windows 版本不支持（需要 Windows 11 22H2+）";
@@ -101,6 +124,13 @@ public partial class SettingsWindow : Window
         S.RecordImages = RecordImages.IsChecked == true;
         S.ShowDateCards = ShowDateCards.IsChecked == true;
         S.EnableScreenshot = EnableScreenshot.IsChecked == true;
+        S.EnableRecording = EnableRecording.IsChecked == true;
+        S.RecordCursor = RecordCursor.IsChecked == true;
+        S.RecordSystemAudio = RecordSystemAudio.IsChecked == true;
+        S.RecordMic = RecordMic.IsChecked == true;
+        S.RecordCopyFile = RecordCopyFile.IsChecked == true;
+        S.OcrAutoCopy = OcrAutoCopy.IsChecked == true;
+        S.EnableTranslate = EnableTranslate.IsChecked == true;
         S.TakeOverWinV = TakeOverWinV.IsChecked == true;
         S.PasteAfterSelect = PasteAfterSelect.IsChecked == true;
         S.StartWithWindows = StartWithWindows.IsChecked == true;
@@ -109,6 +139,7 @@ public partial class SettingsWindow : Window
         App.Current.ApplySettings();
         Glass.Apply(this);
         ShowHotkey();
+        ShowPlugins();
     }
 
     void Retention_Changed(object sender, RoutedEventArgs e)
@@ -174,7 +205,7 @@ public partial class SettingsWindow : Window
     /// <summary>Called by the app (tray "检查更新…") to start a check as soon as the window is open.</summary>
     public void StartCheck()
     {
-        Nav.SelectedIndex = 4; // 更新
+        Nav.SelectedIndex = 6; // 更新
         Check_Click(this, new RoutedEventArgs());
     }
 
@@ -182,11 +213,12 @@ public partial class SettingsWindow : Window
 
     void Nav_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        var pages = new FrameworkElement[] { PageGeneral, PageHistory, PageScreenshot, PageStorage, PageUpdate, PageAbout };
+        var pages = new FrameworkElement[] { PageGeneral, PageHistory, PageScreenshot, PageRecord, PagePlugins, PageStorage, PageUpdate, PageAbout };
         for (int i = 0; i < pages.Length; i++)
             pages[i].Visibility = i == Nav.SelectedIndex ? Visibility.Visible : Visibility.Collapsed;
         PageScroll.ScrollToTop();
-        if (Nav.SelectedIndex == 3 && !_loading) UpdateStats();
+        if (Nav.SelectedIndex == 5 && !_loading) UpdateStats();
+        if (Nav.SelectedIndex == 4 && !_loading) ShowPlugins();
     }
 
     void LogSize_Changed(object sender, RoutedEventArgs e)
@@ -368,46 +400,68 @@ public partial class SettingsWindow : Window
     void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
     void CloseWindow_Click(object sender, RoutedEventArgs e) => Close();
 
-    // ───────────── screenshot hotkey ─────────────
+    // ───────────── hotkeys (截图 and 录屏 share the recording logic) ─────────────
 
-    bool _recording;
+    Border? _recordingBox; // the hotkey box waiting for a key, if any
+    bool RecordingHotkey => _recordingBox != null;
 
-    void ShowHotkey(string? status = null)
+    void ShowHotkey(string? status = null) { ShowShotHotkey(_recordingBox == HotkeyBox ? status : null); ShowRecHotkey(_recordingBox == RecHotkeyBox ? status : null); }
+
+    void ShowShotHotkey(string? status)
     {
-        HotkeyText.Text = _recording ? "请按下组合键…" : string.IsNullOrEmpty(S.ScreenshotHotkey) ? "未设置" : S.ScreenshotHotkey.Replace("+", " + ");
-        HotkeyBox.SetResourceReference(Border.BorderBrushProperty, _recording ? "Accent" : "CardBorder");
+        bool rec = _recordingBox == HotkeyBox;
+        HotkeyText.Text = rec ? "请按下组合键…" : string.IsNullOrEmpty(S.ScreenshotHotkey) ? "未设置" : S.ScreenshotHotkey.Replace("+", " + ");
+        HotkeyBox.SetResourceReference(Border.BorderBrushProperty, rec ? "Accent" : "CardBorder");
         HotkeyBox.IsEnabled = S.EnableScreenshot;
         if (status != null) HotkeyStatus.Text = status;
         else if (!S.EnableScreenshot) HotkeyStatus.Text = "截图已关闭";
-        else if (!App.Current.ScreenshotHotkeyActive && !_recording && !string.IsNullOrEmpty(S.ScreenshotHotkey))
+        else if (!App.Current.ScreenshotHotkeyActive && !rec && !string.IsNullOrEmpty(S.ScreenshotHotkey))
             HotkeyStatus.Text = "⚠ 这个快捷键被其他程序占用了，请换一个";
-        else if (!_recording) HotkeyStatus.Text = "点右边的框，然后按下想用的组合键";
+        else if (!rec) HotkeyStatus.Text = "点右边的框，然后按下想用的组合键";
+    }
+
+    void ShowRecHotkey(string? status)
+    {
+        bool rec = _recordingBox == RecHotkeyBox;
+        RecHotkeyText.Text = rec ? "请按下组合键…" : string.IsNullOrEmpty(S.RecordHotkey) ? "未设置" : S.RecordHotkey.Replace("+", " + ");
+        RecHotkeyBox.SetResourceReference(Border.BorderBrushProperty, rec ? "Accent" : "CardBorder");
+        RecordOptions.IsEnabled = RecordNowBtn.IsEnabled = S.EnableRecording;
+        RecordOptions.Opacity = S.EnableRecording ? 1 : 0.5;
+        if (status != null) RecHotkeyStatus.Text = status;
+        else if (S.EnableRecording && !App.Current.RecordHotkeyActive && !rec && !string.IsNullOrEmpty(S.RecordHotkey))
+            RecHotkeyStatus.Text = "⚠ 这个快捷键被其他程序占用了，请换一个";
+        else if (!rec) RecHotkeyStatus.Text = "按一次开始选区域，录制中再按一次结束并保存";
     }
 
     void HotkeyBox_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
-        _recording = true;
+        // Handled, or the page's ScrollViewer (focusable) takes focus on the bubbling click,
+        // the box loses focus at once and recording stops — the click seemed to do nothing.
+        e.Handled = true;
+        if (RecordingHotkey || sender is not Border box) return;
+        _recordingBox = box;
         App.Current.SuspendScreenshotHotkey(true);
-        HotkeyBox.Focus();
-        System.Windows.Input.Keyboard.Focus(HotkeyBox);
+        box.Focus();
+        System.Windows.Input.Keyboard.Focus(box);
         ShowHotkey("按 Esc 取消；需要包含 Ctrl / Alt / Shift 之一（F1–F12 和 PrintScreen 可以单独用）");
     }
 
     void StopRecording(string? status = null)
     {
-        _recording = false;
+        var box = _recordingBox;
+        _recordingBox = null;
         App.Current.SuspendScreenshotHotkey(false);
-        ShowHotkey(status);
+        if (box == HotkeyBox) ShowShotHotkey(status); else ShowRecHotkey(status);
     }
 
     void HotkeyBox_LostFocus(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e)
     {
-        if (_recording) StopRecording();
+        if (RecordingHotkey && sender == _recordingBox) StopRecording();
     }
 
     void HotkeyBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (!_recording) return;
+        if (!RecordingHotkey || sender != _recordingBox) return;
         e.Handled = true;
         var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;
         if (key == System.Windows.Input.Key.Escape) { StopRecording(); return; }
@@ -417,9 +471,59 @@ public partial class SettingsWindow : Window
             mods |= System.Windows.Input.ModifierKeys.Windows;
         var combo = new HotkeyCombo(mods, key);
         if (!combo.IsValid) { ShowHotkey("需要包含 Ctrl / Alt / Shift 之一，再按一次"); return; }
-        _recording = false;
-        bool ok = App.Current.TrySetScreenshotHotkey(combo);
-        ShowHotkey(ok ? $"已设置为 {combo.ToString().Replace("+", " + ")}" : $"⚠ {combo} 已被其他程序占用，保留原来的快捷键");
+        bool shot = _recordingBox == HotkeyBox;
+        var other = HotkeyCombo.Parse(shot ? S.RecordHotkey : S.ScreenshotHotkey);
+        _recordingBox = null;
+        App.Current.SuspendScreenshotHotkey(false); // the other hotkey comes back before the new one is tried
+        bool ok = shot ? App.Current.TrySetScreenshotHotkey(combo) : App.Current.TrySetRecordHotkey(combo);
+        string status = ok ? $"已设置为 {combo.ToString().Replace("+", " + ")}"
+            : combo == other ? $"⚠ {combo} 已经用于{(shot ? "录屏" : "截图")}，请换一个"
+            : $"⚠ {combo} 已被其他程序占用，保留原来的快捷键";
+        if (shot) ShowShotHotkey(status); else ShowRecHotkey(status);
+    }
+
+    // ───────────── recording ─────────────
+
+    void Fps_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || sender is not RadioButton { Tag: int fps }) return;
+        S.RecordFps = fps;
+        App.Current.ApplySettings();
+    }
+
+    void ShowRecordFolder() =>
+        RecordPath.Text = S.RecordDir + (string.IsNullOrWhiteSpace(S.RecordFolder) ? "（默认）" : "");
+
+    void OpenRecordFolder_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(S.RecordDir);
+            System.Diagnostics.Process.Start("explorer.exe", $"\"{S.RecordDir}\"");
+        }
+        catch (Exception ex) { MessageBox.Show(this, "打不开这个文件夹：" + ex.Message, "AgosClip"); }
+    }
+
+    void ChangeRecordFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "选择录屏视频的保存位置",
+            InitialDirectory = Directory.Exists(S.RecordDir) ? S.RecordDir : null,
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        S.RecordFolder = string.Equals(Path.GetFullPath(dlg.FolderName).TrimEnd('\\'), Path.GetFullPath(Settings.DefaultRecordFolder).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)
+            ? null : dlg.FolderName;
+        App.Current.ApplySettings();
+        ShowRecordFolder();
+    }
+
+    void RecordNow_Click(object sender, RoutedEventArgs e)
+    {
+        Close(); // keep the settings window out of the video
+        var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        t.Tick += (_, _) => { t.Stop(); App.Current.ToggleRecording(); };
+        t.Start();
     }
 
     void ShotNow_Click(object sender, RoutedEventArgs e)
@@ -428,5 +532,81 @@ public partial class SettingsWindow : Window
         var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         t.Tick += (_, _) => { t.Stop(); App.Current.StartScreenshot(); };
         t.Start();
+    }
+
+    // ───────────── plugins ─────────────
+
+    CancellationTokenSource? _ocrInstall;
+
+    void ShowPlugins()
+    {
+        var p = Plugins.Ocr;
+        bool installed = Plugins.IsInstalled(p), busy = _ocrInstall != null;
+        OcrDesc.Text = $"{p.Description}\n下载约 {p.Size / 1048576.0:0} MB，装好后完全离线运行，不上传图片。";
+        OcrState.Text = installed ? $"已安装（{Plugins.InstalledSize(p) / 1048576.0:0} MB）" : "未安装";
+        if (installed) OcrDot.Fill = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x34, 0xC7, 0x59));
+        else OcrDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "SubFg");
+        OcrInstallBtn.Visibility = installed && !busy ? Visibility.Collapsed : Visibility.Visible;
+        OcrInstallBtn.Content = busy ? "取消下载" : "安装";
+        OcrReinstallBtn.Visibility = OcrUninstallBtn.Visibility = installed && !busy ? Visibility.Visible : Visibility.Collapsed;
+        OcrAutoCopy.IsEnabled = installed;
+        TranslateOptions.IsEnabled = S.EnableTranslate;
+        TranslateOptions.Opacity = S.EnableTranslate ? 1 : 0.5;
+    }
+
+    void Target_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || sender is not RadioButton { Tag: string code }) return;
+        S.TranslateTarget = code;
+        App.Current.ApplySettings();
+    }
+
+    void OcrInstall_Click(object sender, RoutedEventArgs e)
+    {
+        if (_ocrInstall != null) { _ocrInstall.Cancel(); return; }
+        _ = InstallOcr();
+    }
+
+    void OcrReinstall_Click(object sender, RoutedEventArgs e) => _ = InstallOcr();
+
+    void OcrUninstall_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(this, "卸载文字识别插件吗？以后需要时可以再安装。", "插件", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        Plugins.Uninstall(Plugins.Ocr);
+        OcrStatus.Text = "已卸载";
+        OcrStatus.Visibility = Visibility.Visible;
+    }
+
+    async Task InstallOcr()
+    {
+        if (_ocrInstall != null) return;
+        _ocrInstall = new CancellationTokenSource();
+        OcrProgressTrack.Visibility = OcrStatus.Visibility = Visibility.Visible;
+        OcrProgressFill.Width = 0;
+        ShowPlugins();
+        var progress = new Progress<DownloadProgress>(p =>
+        {
+            if (p.Note != null) { OcrStatus.Text = p.Note; return; }
+            OcrProgressFill.Width = Math.Max(0, OcrProgressTrack.ActualWidth * p.Fraction);
+            var speed = p.BytesPerSecond >= 1048576 ? $"{p.BytesPerSecond / 1048576:0.0} MB/s" : $"{p.BytesPerSecond / 1024:0} KB/s";
+            OcrStatus.Text = $"正在通过 {p.Source} 下载… {p.Fraction:P0} · {speed}";
+        });
+        try
+        {
+            await Plugins.InstallAsync(Plugins.Ocr, progress, _ocrInstall.Token);
+            OcrStatus.Text = "安装完成。截图工具栏里会出现「识字」和「翻译」。";
+        }
+        catch (OperationCanceledException) { OcrStatus.Text = "已取消。再点「安装」会接着已下载的部分继续。"; }
+        catch (Exception ex)
+        {
+            App.Log("plugin install: " + ex);
+            OcrStatus.Text = ex is InvalidDataException ? ex.Message : "安装失败：" + ex.Message + "。可以再点一次继续。";
+        }
+        finally
+        {
+            _ocrInstall = null;
+            OcrProgressTrack.Visibility = Visibility.Collapsed;
+            ShowPlugins();
+        }
     }
 }

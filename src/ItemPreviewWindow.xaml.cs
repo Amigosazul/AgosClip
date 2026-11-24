@@ -105,6 +105,7 @@ public partial class ItemPreviewWindow : Window
                 PreviewInfo.Text = $"{vm.Meta}{(len > 300 ? "" : $"  ·  {len} 字")}  ·  {LineCount(item.Text)} 行";
                 break;
         }
+        ShowPluginButtons();
         Title = $"预览 · {PreviewTitle.Text}";
         if (!IsVisible) { Show(); }
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
@@ -113,6 +114,26 @@ public partial class ItemPreviewWindow : Window
         if (PreviewMode == "text") { PreviewText.Focus(); Keyboard.Focus(PreviewText); PreviewText.CaretIndex = 0; PreviewText.ScrollToHome(); }
         else { Focus(); Keyboard.Focus(this); }
         if (PreviewMode == "image") Dispatcher.BeginInvoke(ApplyZoom, System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    /// <summary>识别文字 for a picture (OCR plugin installed), 翻译 for text (translation on).</summary>
+    void ShowPluginButtons()
+    {
+        OcrBtn.Visibility = PreviewMode == "image" && RapidOcr.Available ? Visibility.Visible : Visibility.Collapsed;
+        TranslateBtn.Visibility = PreviewMode == "text" && App.Current.Settings.EnableTranslate && PreviewText.Text.Trim().Length > 0
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    void Ocr_Click(object sender, RoutedEventArgs e)
+    {
+        if (PreviewImage.Source is System.Windows.Media.Imaging.BitmapSource img) TextToolWindow.ShowOcr(img);
+    }
+
+    void Translate_Click(object sender, RoutedEventArgs e)
+    {
+        // a selection translates just that part
+        var text = PreviewText.SelectionLength > 0 ? PreviewText.SelectedText : PreviewText.Text;
+        if (!string.IsNullOrWhiteSpace(text)) TextToolWindow.ShowTranslate(text);
     }
 
     static int LineCount(string? s) => string.IsNullOrEmpty(s) ? 0 : s.Count(c => c == '\n') + (s.EndsWith('\n') ? 0 : 1);
@@ -281,6 +302,7 @@ public partial class ItemPreviewWindow : Window
             case Key.OemPlus or Key.Add when PreviewMode == "image": Zoom(1.25); return true;
             case Key.OemMinus or Key.Subtract when PreviewMode == "image": Zoom(0.8); return true;
             case Key.D0 or Key.NumPad0 when PreviewMode == "image": ToggleZoom(); return true;
+            case Key.T when !ctrl && TranslateBtn.IsVisible: Translate_Click(this, new RoutedEventArgs()); return true;
             case Key.Enter or Key.Delete or Key.F2: return true; // never paste/delete/edit underneath
             case Key.P or Key.F when ctrl: return true;
             default: return false;

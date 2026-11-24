@@ -26,6 +26,31 @@ public sealed class Settings
     /// <summary>Screenshot + pin feature and its global hotkey (empty = no hotkey, tray menu only).</summary>
     public bool EnableScreenshot { get; set; } = true;
     public string ScreenshotHotkey { get; set; } = "Alt+Shift+A";
+    /// <summary>Screen recording (region → MP4). Off until the user turns it on in settings.</summary>
+    public bool EnableRecording { get; set; }
+    /// <summary>Starts a recording; pressed again while recording it stops and saves.</summary>
+    public string RecordHotkey { get; set; } = "Alt+Shift+R";
+    /// <summary>Where recordings go; null = Videos\AgosClip.</summary>
+    public string? RecordFolder { get; set; }
+    public int RecordFps { get; set; } = 30;
+    public bool RecordCursor { get; set; } = true;
+    /// <summary>Sound the computer plays (WASAPI loopback of the default output device).</summary>
+    public bool RecordSystemAudio { get; set; } = true;
+    /// <summary>The default microphone, mixed with the system sound.</summary>
+    public bool RecordMic { get; set; }
+    /// <summary>After saving, put the .mp4 on the clipboard as a file so it can be pasted into a chat.</summary>
+    public bool RecordCopyFile { get; set; } = true;
+
+    /// <summary>Translation buttons (text and pictures). Sends the text to an online service only when clicked.</summary>
+    public bool EnableTranslate { get; set; } = true;
+    /// <summary>Translator target language code, or "auto" (Chinese → English, everything else → Chinese).</summary>
+    public string TranslateTarget { get; set; } = "auto";
+    /// <summary>Put the recognised text on the clipboard as soon as OCR finishes.</summary>
+    public bool OcrAutoCopy { get; set; }
+
+    public static string DefaultRecordFolder =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "AgosClip");
+    public string RecordDir => string.IsNullOrWhiteSpace(RecordFolder) ? DefaultRecordFolder : RecordFolder!;
     /// <summary>Issue #11: panel size in DIP after the user resized it; 0 = the default 400 × 580.</summary>
     public double PanelWidth { get; set; }
     public double PanelHeight { get; set; }

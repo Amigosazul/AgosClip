@@ -139,6 +139,8 @@ begin
     exit;
 #endif
     Data := ExpandConstant('{userappdata}\AgosClip');
+    // plugins (OCR models etc.) are re-downloadable: always remove them, whatever the answer below
+    DelTree(Data + '\plugins', True, True, True);
     if (CustomData <> '') and (CompareText(RemoveBackslash(CustomData), Data) = 0) then CustomData := '';
     if CustomData <> '' then Where := CustomData + #13#10 + Data else Where := Data;
     if (DirExists(Data) or ((CustomData <> '') and DirExists(CustomData))) and not UninstallSilent() then

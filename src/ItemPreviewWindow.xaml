@@ -23,20 +23,28 @@
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <StackPanel VerticalAlignment="Center">
                                     <TextBlock x:Name="PreviewTitle" Text="预览" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis"/>
                                     <TextBlock x:Name="PreviewInfo" FontSize="11" Foreground="{DynamicResource SubFg}" TextTrimming="CharacterEllipsis" Margin="0,1,0,0"/>
                                 </StackPanel>
-                                <Button x:Name="PreviewZoomOut" WindowChrome.IsHitTestVisibleInChrome="True" Grid.Column="1" Style="{StaticResource IconButton}" Content="&#xE71F;" FontSize="12"
+                                <!-- plugins: 识别文字 for pictures, 翻译 for text -->
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,6,0">
+                                    <Button x:Name="OcrBtn" Style="{StaticResource PillButton}" Padding="12,4" Margin="0,0,6,0" Content="识别文字"
+                                            ToolTip="提取图片里的文字（文字识别插件）" Click="Ocr_Click" Visibility="Collapsed" WindowChrome.IsHitTestVisibleInChrome="True"/>
+                                    <Button x:Name="TranslateBtn" Style="{StaticResource PillButton}" Padding="12,4" Content="翻译"
+                                            ToolTip="翻译这段文字 (T)" Click="Translate_Click" Visibility="Collapsed" WindowChrome.IsHitTestVisibleInChrome="True"/>
+                                </StackPanel>
+                                <Button x:Name="PreviewZoomOut" WindowChrome.IsHitTestVisibleInChrome="True" Grid.Column="2" Style="{StaticResource IconButton}" Content="&#xE71F;" FontSize="12"
                                         ToolTip="缩小 (-)" Click="PreviewZoomOut_Click"/>
-                                <Button x:Name="PreviewZoomText" WindowChrome.IsHitTestVisibleInChrome="True" Grid.Column="2" Style="{StaticResource IconButton}" Width="48" FontSize="11.5"
+                                <Button x:Name="PreviewZoomText" WindowChrome.IsHitTestVisibleInChrome="True" Grid.Column="3" Style="{StaticResource IconButton}" Width="48" FontSize="11.5"
                                         FontFamily="{StaticResource UiFont}" Content="适应" ToolTip="在适应窗口和 100% 之间切换 (0)" Click="PreviewZoomToggle_Click"/>
-                                <Button x:Name="PreviewZoomIn" WindowChrome.IsHitTestVisibleInChrome="True" Grid.Column="3" Style="{StaticResource IconButton}" Content="&#xE8A3;" FontSize="12"
+                                <Button x:Name="PreviewZoomIn" WindowChrome.IsHitTestVisibleInChrome="True" Grid.Column="4" Style="{StaticResource IconButton}" Content="&#xE8A3;" FontSize="12"
                                         ToolTip="放大 (+)，也可以 Ctrl + 滚轮" Click="PreviewZoomIn_Click"/>
-                                <Button x:Name="MaxBtn" Grid.Column="4" Style="{StaticResource IconButton}" Content="&#xE922;" FontSize="11"
+                                <Button x:Name="MaxBtn" Grid.Column="5" Style="{StaticResource IconButton}" Content="&#xE922;" FontSize="11"
                                         ToolTip="最大化 / 还原" Click="Max_Click" WindowChrome.IsHitTestVisibleInChrome="True"/>
-                                <Button Grid.Column="5" Style="{StaticResource IconButton}" Content="&#xE711;" FontSize="12"
+                                <Button Grid.Column="6" Style="{StaticResource IconButton}" Content="&#xE711;" FontSize="12"
                                         ToolTip="关闭 (Esc / 空格)" Click="PreviewClose_Click" WindowChrome.IsHitTestVisibleInChrome="True"/>
                             </Grid>
                             <Border Grid.Row="1" CornerRadius="8" Background="{DynamicResource CardBg}" BorderBrush="{DynamicResource CardBorder}"

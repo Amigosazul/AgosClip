@@ -41,7 +41,20 @@ public partial class CaptureOverlay : Window
         MouseRightButtonUp += (_, e) => { if (_sel.IsEmpty || _dragging) _session.Cancel(); else ClearSelection(); e.Handled = true; };
         PreviewKeyDown += OnKey;
         BuildOptions();
+        bool ocr = RapidOcr.Available;
+        OcrBtn.Visibility = ocr ? Visibility.Visible : Visibility.Collapsed;
+        TranslateBtn.Visibility = ocr && App.Current.Settings.EnableTranslate ? Visibility.Visible : Visibility.Collapsed;
+        if (session.Mode == CaptureMode.Record)
+        {
+            Title = "AgosClip 录屏";
+            ShotTools.Visibility = Visibility.Collapsed;
+            RecordBtn.Visibility = Visibility.Visible;
+            HintText.Text = "拖动鼠标选择录制区域 · Enter 开始录制（不选就录整个屏幕）· Esc 取消";
+        }
     }
+
+    bool Recording => _session.Mode == CaptureMode.Record;
+    void Record_Click(object sender, RoutedEventArgs e) => Copy();
 
     internal Int32Rect MonitorRect => _monitor;
 
@@ -185,14 +198,21 @@ public partial class CaptureOverlay : Window
                 else if (_tool != Tool.None) SetTool(Tool.None);
                 else _session.Cancel();
                 break;
+            case Key.Enter when Recording: _session.StartRecording(this, wholeMonitor: !HasSelection); break;
             case Key.Enter when HasSelection: Copy(); break;
-            case Key.C when HasSelection && (Keyboard.Modifiers & ModifierKeys.Control) != 0: Copy(); break;
+            case Key.C when HasSelection && !Recording && (Keyboard.Modifiers & ModifierKeys.Control) != 0: Copy(); break;
             default: return;
         }
         e.Handled = true;
     }
 
-    internal void Copy() { if (HasSelection) { CommitText(); _session.Finish(this, CaptureAction.Copy); } }
+    internal void Copy()
+    {
+        if (!HasSelection) return;
+        if (Recording) { _session.StartRecording(this, wholeMonitor: false); return; }
+        CommitText();
+        _session.Finish(this, CaptureAction.Copy);
+    }
     void Copy_Click(object sender, RoutedEventArgs e) => Copy();
     void Pin_Click(object sender, RoutedEventArgs e)
     {
@@ -202,6 +222,8 @@ public partial class CaptureOverlay : Window
     void PinTop_Click(object sender, RoutedEventArgs e) { CommitText(); _session.Finish(this, CaptureAction.PinOnTop); }
     void PinNormal_Click(object sender, RoutedEventArgs e) { CommitText(); _session.Finish(this, CaptureAction.PinNormal); }
     void Cancel_Click(object sender, RoutedEventArgs e) => _session.Cancel();
+    void Ocr_Click(object sender, RoutedEventArgs e) { if (!HasSelection) return; CommitText(); _session.Finish(this, CaptureAction.Ocr); }
+    void Translate_Click(object sender, RoutedEventArgs e) { if (!HasSelection) return; CommitText(); _session.Finish(this, CaptureAction.Translate); }
 
     // ───────────── editing: text, mosaic, undo ─────────────
 

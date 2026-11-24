@@ -75,7 +75,7 @@
             <TextBlock x:Name="SizeText" Foreground="White" FontSize="11.5"/>
         </Border>
         <Border x:Name="Hint" Background="#CC1E1E20" CornerRadius="8" Padding="14,8" IsHitTestVisible="False">
-            <TextBlock Foreground="White" Text="拖动鼠标选择截图区域 · Enter 复制 · Ctrl+Z 撤回 · Esc 取消"/>
+            <TextBlock x:Name="HintText" Foreground="White" Text="拖动鼠标选择截图区域 · Enter 复制 · Ctrl+Z 撤回 · Esc 取消"/>
         </Border>
 
         <!-- toolbar at the selection's bottom-right -->
@@ -86,6 +86,15 @@
             </Border.Effect>
             <StackPanel>
                 <StackPanel Orientation="Horizontal">
+                    <!-- record mode: just 开始录制 (and cancel below) -->
+                    <Button x:Name="RecordBtn" Style="{StaticResource ToolBtn}" Click="Record_Click" Visibility="Collapsed"
+                            ToolTip="开始录制这块区域 (Enter / 双击)">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="11" Height="11" Fill="#FF3B30" Margin="0,1,7,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="开始录制" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Button>
+                    <StackPanel x:Name="ShotTools" Orientation="Horizontal">
                     <!-- editing tools -->
                     <Button x:Name="TextToolBtn" Style="{StaticResource ToolToggle}" Click="TextTool_Click" ToolTip="文字：在选区里点一下输入">
                         <StackPanel Orientation="Horizontal">
@@ -118,6 +127,19 @@
                             <TextBlock Text="长截图"/>
                         </StackPanel>
                     </Button>
+                    <!-- plugins: shown only when usable (文字识别 installed / 翻译 turned on) -->
+                    <Button x:Name="OcrBtn" Style="{StaticResource ToolToggle}" Click="Ocr_Click" ToolTip="识别文字：提取选区里的文字，可以复制和翻译" Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8C1;" FontFamily="{StaticResource IconFont}" FontSize="13" Margin="0,1,5,0"/>
+                            <TextBlock Text="识字"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="TranslateBtn" Style="{StaticResource ToolToggle}" Click="Translate_Click" ToolTip="翻译图片：把译文直接写在图上，钉在原处" Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE774;" FontFamily="{StaticResource IconFont}" FontSize="13" Margin="0,1,5,0"/>
+                            <TextBlock Text="翻译"/>
+                        </StackPanel>
+                    </Button>
                     <Border Width="1" Margin="4,6" Background="{DynamicResource CardBorder}"/>
                     <Button x:Name="CopyBtn" Style="{StaticResource ToolBtn}" Click="Copy_Click" ToolTip="复制到剪贴板 (Enter / 双击)">
                         <StackPanel Orientation="Horizontal">
@@ -132,6 +154,7 @@
                             <TextBlock Text="&#xE70D;" FontFamily="{StaticResource IconFont}" FontSize="9" Margin="6,2,0,0"/>
                         </StackPanel>
                     </Button>
+                    </StackPanel>
                     <Button Style="{StaticResource ToolBtn}" Click="Cancel_Click" ToolTip="取消 (Esc / 右键)" Padding="9,5">
                         <TextBlock Text="&#xE711;" FontFamily="{StaticResource IconFont}" FontSize="12" Margin="0,1,0,0"/>
                     </Button>

@@ -16,7 +16,7 @@ namespace AgosClip;
 /// `AgosClip.exe --selftest &lt;outDir&gt;` with AGOSCLIP_DATA pointing at a scratch folder.
 /// Exercises storage, real clipboard capture and paste-back, then renders the UI to PNGs.
 /// </summary>
-internal static class SelfTest
+internal static partial class SelfTest
 {
     static readonly StringBuilder Report = new();
     static int _fails;
@@ -76,6 +76,8 @@ internal static class SelfTest
                 ScreenshotTests(app, outDir);
                 EditAndLongShotTests(outDir);
                 LongShotFlowTests();
+                RecordingTests(outDir);
+                OcrTests(outDir);
             }
             Seed(app);
             PlacementTests();
@@ -767,7 +769,7 @@ internal static class SelfTest
                     st = (long)Native.GetWindowLongPtr(new System.Windows.Interop.WindowInteropHelper(sw).Handle, -16);
                     Check((st & 0x00080000L) == 0, "…and it stays that way after minimise/restore");
                 }
-                string[] names = { "general", "history", "screenshot", "storage", "update", "about" };
+                string[] names = { "general", "history", "screenshot", "record", "plugins", "storage", "update", "about" };
                 for (int pi = 0; pi < names.Length; pi++)
                 {
                     if (dark && pi > 0) break; // dark: just the first page
@@ -775,6 +777,17 @@ internal static class SelfTest
                     Pump(250);
                     RenderOnGlass((FrameworkElement)sw.Content, Path.Combine(outDir, $"settings-{names[pi]}-{tag}.png"), dark, glass);
                 }
+                // clicking the screenshot hotkey box starts recording and the click is not passed on
+                // to the page's ScrollViewer (which used to steal focus and end recording at once)
+                sw.ShowPage(2); Pump(150);
+                var down = new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, System.Windows.Input.MouseButton.Left)
+                    { RoutedEvent = UIElement.MouseLeftButtonDownEvent };
+                sw.HotkeyBox.RaiseEvent(down);
+                Pump(100);
+                Check(down.Handled && sw.HotkeyText.Text == "请按下组合键…", $"clicking the hotkey box starts recording (handled={down.Handled}, text={sw.HotkeyText.Text})");
+                sw.HotkeyBox.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice, PresentationSource.FromVisual(sw)!, Environment.TickCount, System.Windows.Input.Key.Escape)
+                    { RoutedEvent = UIElement.PreviewKeyDownEvent });
+                Check(sw.HotkeyText.Text != "请按下组合键…", "Esc ends hotkey recording");
                 sw.Close();
             }
         }
