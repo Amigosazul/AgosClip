@@ -1,9 +1,9 @@
 {
-  "version": "1.11.0",
-  "file": "AgosClip-Setup-1.11.0.exe",
-  "sha256": "818f2123587bc2cd87e20edaf742fb268f509ec50fa3907502a3cadb7db0ba98",
-  "size": 53135263,
-  "notes": "## AgosClip 1.11.0\n\n### 新增：屏幕录制（带声音）\n- 默认关闭，在 **设置 → 录屏** 里打开。按 **Alt+Shift+R**（可以改）或托盘菜单“录屏”开始。\n- 拖动鼠标选要录的区域，点“开始录制”；不选区域直接按 Enter 就录整个屏幕。\n- 录制时，**区域以外的地方变成浅灰色**，区域外有红框，旁边的控制条显示时长，可以暂停 / 继续、放弃，点红色的 **“结束录制”** 按钮保存。再按一次快捷键也会结束并保存。灰色遮罩、红框和控制条都不会被录进视频，鼠标可以照常点击灰色区域下面的程序。\n- **声音**：可以同时录系统声音（电脑正在播放的声音，默认开）和麦克风（默认关），和画面同步；暂停时声音和画面一起停。\n- 保存为 MP4（H.264 + AAC，用 Windows 自带的编码器，不用另外安装），默认放在“视频\\AgosClip”，可以改位置；帧率可选 15 / 30 / 60，可以选择录不录鼠标指针。\n- 录完会把视频文件复制到剪贴板（可以关掉），直接粘贴到微信、QQ 或文件夹就能发出去。\n\n### 新增：插件（文字识别、翻译）\n- **设置 → 插件** 里按需安装，不增加安装包体积。\n- **文字识别**：离线识别（RapidOCR / PaddleOCR），中英文混排效果好，图片不会上传。插件约 19 MB，点“安装”下载（多线路，SHA-256 校验）。装好后截图工具栏多出“识字”，钉图右键有“识别文字”，剪贴板图片预览里有“识别文字”按钮；长截图会分段识别。\n- **翻译**：文本翻译和图片翻译。截图工具栏的“翻译”会把译文写在图上并钉在原处（右键可切换原图 / 译文）；剪贴板文本预览里点“翻译”或按 T。优先谷歌翻译（国内需要代理，会自动走系统代理），连不上时换 MyMemory。只有点“翻译”时才会把文字发出去。\n\n### 改进\n- 设置里点快捷键框时，偶尔点了没反应的问题已修复。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.11.0/AgosClip-Setup-1.11.0.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.11.0/AgosClip-Setup-1.11.0.exe",
+  "version": "1.11.1",
+  "file": "AgosClip-Setup-1.11.1.exe",
+  "sha256": "6030a872a7da77e420b1033f208862313ae89087cb705cf3a74ea06cac575293",
+  "size": 53109634,
+  "notes": "## AgosClip 1.11.1\n\n### 修复\n- **按 Win+V 时偶尔会弹出开始菜单**：松开 Win 键比较快的时候，Windows 会把这次按键当成“单独按了一下 Win”而打开开始菜单。现在 AgosClip 会在 Win 键松开的那一刻处理好，开始菜单不会再跟着弹出来。单独按 Win 键打开开始菜单不受影响。\n- 例外：如果当前在最前面的是“以管理员身份运行”的程序，Windows 不允许普通程序代替它处理按键，这种情况下开始菜单仍可能弹出（AgosClip 不会让 Win 键卡住）。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.11.1/AgosClip-Setup-1.11.1.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.11.1/AgosClip-Setup-1.11.1.exe",
   "mirrors": [
     "https://ghfast.top/",
     "https://gh-proxy.com/",
