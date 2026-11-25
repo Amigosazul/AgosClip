@@ -1,9 +1,9 @@
 {
-  "version": "1.11.1",
-  "file": "AgosClip-Setup-1.11.1.exe",
-  "sha256": "6030a872a7da77e420b1033f208862313ae89087cb705cf3a74ea06cac575293",
-  "size": 53109634,
-  "notes": "## AgosClip 1.11.1\n\n### 修复\n- **按 Win+V 时偶尔会弹出开始菜单**：松开 Win 键比较快的时候，Windows 会把这次按键当成“单独按了一下 Win”而打开开始菜单。现在 AgosClip 会在 Win 键松开的那一刻处理好，开始菜单不会再跟着弹出来。单独按 Win 键打开开始菜单不受影响。\n- 例外：如果当前在最前面的是“以管理员身份运行”的程序，Windows 不允许普通程序代替它处理按键，这种情况下开始菜单仍可能弹出（AgosClip 不会让 Win 键卡住）。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.11.1/AgosClip-Setup-1.11.1.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.11.1/AgosClip-Setup-1.11.1.exe",
+  "version": "1.12.0",
+  "file": "AgosClip-Setup-1.12.0.exe",
+  "sha256": "64f593ea5928384403a32834b550e212d39ae08f82f1fb4c0662f84a8cda5f00",
+  "size": 53164583,
+  "notes": "## AgosClip 1.12.0\n\n### 新功能\n- **富文本翻译**：从网页、Word、WPS、邮件复制的带格式内容（卡片上标着“富文本”“表格”）会连格式一起翻译，只替换文字，加粗、颜色、链接、列表、表格都保持原样，代码块不翻译。点“复制译文（带格式）”后粘贴到 Word、邮件或网页编辑器里格式不变。\n- 翻译入口更多了：卡片上的翻译按钮、选中后按 **Ctrl+T**，或按空格预览后点“翻译”/按 T。\n\n### 改进\n- **图片翻译保留排版**：列表项、标题、菜单这类单独一行的文字翻译后仍然单独成行，不再被并成一整段；居中、右对齐的文字保持原来的对齐方式；原图里的粗体，译文也用粗体。\n- **钉图翻译的提示不再挡字**：“正在翻译”移到了钉图外面（上方，上面没地方时放在下方），并加了转圈动画；翻译完成几秒后自动消失。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.12.0/AgosClip-Setup-1.12.0.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.12.0/AgosClip-Setup-1.12.0.exe\n- https://ghproxy.net/https://github.com/Amigosazul/AgosClip/releases/download/v1.12.0/AgosClip-Setup-1.12.0.exe",
   "mirrors": [
     "https://ghfast.top/",
     "https://gh-proxy.com/",
