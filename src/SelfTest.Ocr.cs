@@ -13,15 +13,16 @@ namespace AgosClip;
 internal static partial class SelfTest
 {
     /// <summary>Draws lines of text (at the given y, font size, colours) onto a w×h picture.</summary>
-    static BitmapSource TextPicture(int w, int h, Color bg, IEnumerable<(string Text, double X, double Y, double Size, Color Fg)> lines)
+    static BitmapSource TextPicture(int w, int h, Color bg, IEnumerable<(string Text, double X, double Y, double Size, Color Fg)> lines, Func<string, bool>? bold = null)
     {
         var dv = new DrawingVisual();
         using (var dc = dv.RenderOpen())
         {
             dc.DrawRectangle(new SolidColorBrush(bg), null, new Rect(0, 0, w, h));
             var tf = new Typeface(new FontFamily("Microsoft YaHei UI, Segoe UI"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+            var tfBold = new Typeface(new FontFamily("Microsoft YaHei UI, Segoe UI"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
             foreach (var l in lines)
-                dc.DrawText(new FormattedText(l.Text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, tf, l.Size, new SolidColorBrush(l.Fg), 1.0), new Point(l.X, l.Y));
+                dc.DrawText(new FormattedText(l.Text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, bold?.Invoke(l.Text) == true ? tfBold : tf, l.Size, new SolidColorBrush(l.Fg), 1.0), new Point(l.X, l.Y));
         }
         var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
         rtb.Render(dv);
@@ -69,6 +70,68 @@ internal static partial class SelfTest
             var px = new byte[4];
             new CroppedBitmap(rendered, new Int32Rect(310, 60, 1, 1)).CopyPixels(px, 4, 0);
             Check(Math.Abs(px[2] - 0xF4) < 6 && Math.Abs(px[1] - 0xF1) < 6 && Math.Abs(px[0] - 0xE8) < 6, $"image translate: cover-up uses the sampled background ({px[2]:X2}{px[1]:X2}{px[0]:X2})");
+        }
+
+        // formatting: list items and short lines keep their own line, centred paragraphs stay centred, bold stays bold
+        {
+            var layout = new List<OcrLine>
+            {
+                new(new Int32Rect(20, 20, 100, 24), "Settings", 0.9f),
+                new(new Int32Rect(20, 50, 200, 24), "1. Open the panel", 0.9f),
+                new(new Int32Rect(20, 80, 180, 24), "2. Press Ctrl+T", 0.9f),
+                new(new Int32Rect(20, 130, 120, 24), "Short menu line", 0.9f),
+                new(new Int32Rect(20, 160, 320, 24), "A much longer line right under it", 0.9f),
+                new(new Int32Rect(200, 230, 160, 24), "Welcome to the", 0.9f),
+                new(new Int32Rect(220, 260, 120, 24), "new release", 0.9f),
+            };
+            var lb = ImageTranslator.Group(layout);
+            Check(lb.Count == 6 && lb[5].Lines.Count == 2, $"image translate: list items and hard line breaks stay separate lines ({lb.Count} blocks: {string.Join(" | ", lb.Select(b => b.Text))})");
+            Check(lb.Count == 6 && ImageTranslator.AlignOf(lb[5]) == ImageTranslator.Align.Center && ImageTranslator.AlignOf(lb[1]) == ImageTranslator.Align.Left,
+                "image translate: centred paragraph detected as centred");
+            Check(ImageTranslator.StartsItem("• item") && ImageTranslator.StartsItem("3) step") && ImageTranslator.StartsItem("二、背景")
+                && !ImageTranslator.StartsItem("3.14 is pi") && !ImageTranslator.StartsItem("the lazy dog"), "image translate: list item markers");
+
+            // bold vs regular, the same size, English and Chinese
+            var texts = new[] { ("Bold Title Text", true), ("regular body text line here", false), ("粗体标题文字", true), ("普通正文的一行文字", false) };
+            var specs = texts.Select((t, i) => (t.Item1, 20.0, 20.0 + i * 50, 20.0, Color.FromRgb(0x22, 0x22, 0x22))).ToList();
+            var bpic = TextPicture(600, 220, Colors.White, specs, t => texts.First(x => x.Item1 == t).Item2);
+            var bpx = new byte[600 * 220 * 4];
+            new FormatConvertedBitmap(bpic, PixelFormats.Bgra32, null, 0).CopyPixels(bpx, 600 * 4, 0);
+            var ratios = specs.Select(sp =>
+            {
+                var ft = new FormattedText(sp.Item1, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, new Typeface("Microsoft YaHei UI"), 20, Brushes.Black, 1.0);
+                var box = new Int32Rect(16, (int)sp.Item3 - 2, (int)ft.Width + 8, (int)ft.Height + 4);
+                return ImageTranslator.StrokeRatio(bpx, 600, 220, box, Colors.White);
+            }).ToList();
+            var bolds = ImageTranslator.Bolds(ratios);
+            Check(bolds.SequenceEqual(texts.Select(t => t.Item2)), $"image translate: bold detected (stroke ratios {string.Join(", ", ratios.Select(r => r.ToString("0.000")))})");
+            Check(ImageTranslator.Bolds(new[] { ratios[1] }).SequenceEqual(new[] { false }) && ImageTranslator.Bolds(new[] { ratios[1], ratios[3] }).All(b => !b)
+                && ImageTranslator.Bolds(new[] { ratios[0] }).SequenceEqual(new[] { true }),
+                "image translate: regular text alone (or regular Chinese next to English) is not bold; bold alone still is");
+            // render: OCR-like boxes measured around the drawn text; nothing in this picture is bold
+            var lpic = TextPicture(600, 300, Colors.White, layout.Select(l => (l.Text, (double)l.Box.X, (double)l.Box.Y, 17.0, Colors.Black)));
+            var lpx = new byte[600 * 300 * 4];
+            new FormatConvertedBitmap(lpic, PixelFormats.Bgra32, null, 0).CopyPixels(lpx, 600 * 4, 0);
+            var measured = layout.Select(l =>
+            {
+                var ft = new FormattedText(l.Text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, new Typeface("Microsoft YaHei UI"), 17, Brushes.Black, 1.0);
+                return new OcrLine(new Int32Rect(l.Box.X - 2, l.Box.Y - 1, (int)Math.Ceiling(ft.Width) + 4, (int)Math.Ceiling(ft.Height) + 2), l.Text, l.Score);
+            }).ToList();
+            var mb = ImageTranslator.Group(measured);
+            var plain = mb.Select(b => b.Lines.Average(l => ImageTranslator.StrokeRatio(lpx, 600, 300, l.Box, Colors.White))).ToList();
+            Check(ImageTranslator.Bolds(plain).All(b => !b), $"image translate: regular text of one picture is not taken for bold (ratios {string.Join(", ", plain.Select(r => r.ToString("0.000")))})");
+            var lr = ImageTranslator.Render(lpic, mb, mb.Select((b, i) => b.Text.StartsWith("Welcome") ? "欢迎使用新版本" : "译文 " + i).ToList());
+            File.WriteAllBytes(Path.Combine(outDir, "translate-layout.png"), ScreenCapture.Png(lr));
+
+            // the pin's translation status sits outside the picture, with a spinner while it works
+            var pin = PinWindow.Open(lpic, new Int32Rect(200, 200, 600, 300), onTop: false);
+            pin.TranslateInPlace();
+            Pump(100);
+            Check(RapidOcr.Available ? pin.StatusBusy && pin.StatusMessage.Contains("翻译") : !pin.StatusBusy && pin.StatusMessage.Contains("插件"),
+                $"pin translate: status pill shown (busy={pin.StatusBusy}, \"{pin.StatusMessage}\")");
+            pin.Close();
+            Pump(100);
+            Check(!pin.StatusBusy && pin.StatusMessage == "", "pin translate: status pill goes away with the pin");
         }
 
         if (!RapidOcr.Available)

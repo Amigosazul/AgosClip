@@ -82,16 +82,19 @@
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="{Binding Meta}" FontSize="11" Foreground="{DynamicResource SubFg}"
                                                VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                                     <Button x:Name="viewBtn" Grid.Column="1" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
                                             Content="&#xE890;" ToolTip="预览 (空格)" Click="Preview_Click" Visibility="Hidden"/>
-                                    <Button x:Name="editBtn" Grid.Column="2" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
+                                    <Button x:Name="trBtn" Grid.Column="2" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
+                                            Content="&#xF2B7;" ToolTip="{Binding TranslateTip}" Click="Translate_Click" Visibility="Hidden"/>
+                                    <Button x:Name="editBtn" Grid.Column="3" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
                                             Content="&#xE70F;" ToolTip="编辑 (F2)" Click="Edit_Click" Visibility="Hidden"/>
-                                    <Button x:Name="pinBtn" Grid.Column="3" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
+                                    <Button x:Name="pinBtn" Grid.Column="4" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
                                             Content="{Binding PinGlyph}" ToolTip="固定 / 取消固定 (Ctrl+P)" Click="Pin_Click" Visibility="Hidden"/>
-                                    <Button x:Name="delBtn" Grid.Column="4" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
+                                    <Button x:Name="delBtn" Grid.Column="5" Style="{StaticResource IconButton}" Width="26" Height="24" FontSize="12"
                                             Content="&#xE74D;" ToolTip="删除 (Del)" Click="Delete_Click" Visibility="Hidden"/>
                                 </Grid>
                             </Grid>
@@ -107,6 +110,7 @@
                                 <Setter TargetName="delBtn" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="editBtn" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="viewBtn" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="trBtn" Property="Visibility" Value="Visible"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="b" Property="Background" Value="{DynamicResource SelBg}"/>
@@ -115,10 +119,15 @@
                                 <Setter TargetName="delBtn" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="editBtn" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="viewBtn" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="trBtn" Property="Visibility" Value="Visible"/>
                             </Trigger>
                             <!-- only text can be edited (declared last so it wins over hover/selected) -->
                             <DataTrigger Binding="{Binding IsText}" Value="False">
                                 <Setter TargetName="editBtn" Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                            <!-- translate: text only, and only with translation turned on in 设置 → 插件 -->
+                            <DataTrigger Binding="{Binding CanTranslate}" Value="False">
+                                <Setter TargetName="trBtn" Property="Visibility" Value="Collapsed"/>
                             </DataTrigger>
                             <!-- issue #13: the card being dragged -->
                             <DataTrigger Binding="{Binding Dragging}" Value="True">

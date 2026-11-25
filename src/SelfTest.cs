@@ -79,6 +79,7 @@ internal static partial class SelfTest
                 LongShotFlowTests();
                 RecordingTests(outDir);
                 OcrTests(outDir);
+                RichTranslateTests(outDir);
             }
             Seed(app);
             PlacementTests();

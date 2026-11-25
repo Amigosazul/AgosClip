@@ -69,6 +69,9 @@ public sealed class ItemVm : Bindable
     public bool IsImage => Item.Kind == ClipKind.Image;
     public bool IsText => Item.Kind == ClipKind.Text;
     public bool IsFiles => Item.Kind == ClipKind.Files;
+    /// <summary>Text with translation turned on; rich text ("富文本"/"表格") is translated with its formatting.</summary>
+    public bool CanTranslate => IsText && App.Current?.Settings.EnableTranslate == true;
+    public string TranslateTip => Badge != null ? "翻译，保留格式 (Ctrl+T)" : "翻译 (Ctrl+T)";
 
     /// <summary>"表格" / "富文本" when the item keeps formats beyond plain text.</summary>
     public string? Badge =>

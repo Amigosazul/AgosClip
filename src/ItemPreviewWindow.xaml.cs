@@ -85,9 +85,12 @@ public partial class ItemPreviewWindow : Window
     };
     const long MaxPreviewText = 2 * 1024 * 1024;
 
+    ClipItem? _item;
+
     internal void OpenPreview(ItemVm vm)
     {
         var item = vm.Item;
+        _item = item;
         PreviewTitle.Text = item.Kind switch { ClipKind.Image => "图片", ClipKind.Files => vm.FilesTitle, _ => "文本" };
         PreviewInfo.Text = vm.Meta;
         switch (item.Kind)
@@ -131,9 +134,10 @@ public partial class ItemPreviewWindow : Window
 
     void Translate_Click(object sender, RoutedEventArgs e)
     {
-        // a selection translates just that part
-        var text = PreviewText.SelectionLength > 0 ? PreviewText.SelectedText : PreviewText.Text;
-        if (!string.IsNullOrWhiteSpace(text)) TextToolWindow.ShowTranslate(text);
+        // a selection translates just that part (as plain text); the whole item keeps its formatting
+        if (PreviewText.SelectionLength > 0) { if (!string.IsNullOrWhiteSpace(PreviewText.SelectedText)) TextToolWindow.ShowTranslate(PreviewText.SelectedText); return; }
+        if (_item is { Kind: ClipKind.Text } it && it.Text == PreviewText.Text) { PanelWindow.Translate(it); return; }
+        if (!string.IsNullOrWhiteSpace(PreviewText.Text)) TextToolWindow.ShowTranslate(PreviewText.Text);
     }
 
     static int LineCount(string? s) => string.IsNullOrEmpty(s) ? 0 : s.Count(c => c == '\n') + (s.EndsWith('\n') ? 0 : 1);

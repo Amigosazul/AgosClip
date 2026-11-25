@@ -46,5 +46,24 @@
                 CornerRadius="5" Padding="6,2" Visibility="Collapsed" IsHitTestVisible="False">
             <TextBlock x:Name="ZoomText" Foreground="White" FontSize="11.5" TextWrapping="Wrap"/>
         </Border>
+        <!-- translation status: a pill just outside the picture (above it, or below when there is no room) so it never
+             covers the text being translated; the ring spins while the translation is running -->
+        <Popup x:Name="StatusPop" PlacementTarget="{Binding ElementName=Root}" Placement="Top" VerticalOffset="-6"
+               AllowsTransparency="True" StaysOpen="True" Focusable="False" IsHitTestVisible="False">
+            <Border Background="#E61E1E20" CornerRadius="11" Padding="8,3,10,3" Margin="0,0,0,0">
+                <StackPanel Orientation="Horizontal">
+                    <Grid x:Name="Spinner" Width="14" Height="14" Margin="0,0,7,0" VerticalAlignment="Center">
+                        <Ellipse Stroke="#40FFFFFF" StrokeThickness="2"/>
+                        <Path Data="M 7,1 A 6,6 0 0 1 13,7" Stroke="White" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                              RenderTransformOrigin="0.5,0.5">
+                            <Path.RenderTransform>
+                                <RotateTransform x:Name="SpinnerTurn"/>
+                            </Path.RenderTransform>
+                        </Path>
+                    </Grid>
+                    <TextBlock x:Name="StatusText" Foreground="White" FontSize="12" VerticalAlignment="Center" MaxWidth="420" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+        </Popup>
     </Grid>
 </Window>

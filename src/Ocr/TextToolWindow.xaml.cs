@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -17,9 +18,16 @@ public partial class TextToolWindow : Window
 {
     CancellationTokenSource? _work;
     bool _translatedCurrent;
+    /// <summary>Rich formats (HTML/RTF) of the history item being translated; null for plain text.</summary>
+    System.Collections.Generic.IReadOnlyList<ClipFormat>? _rich;
+    string? _richSource;                  // the item's text: editing it falls back to plain translation
+    RichTranslator.Result? _richResult;   // what 复制译文 puts on the clipboard (text + formats)
 
     static Settings S => App.Current.Settings;
     internal string SourceText => Source.Text;
+    internal string ResultText => Result.Text;
+    internal RichTranslator.Result? RichResult => _richResult;
+    internal bool Busy => !TranslateBtn.IsEnabled;
 
     TextToolWindow()
     {
@@ -54,13 +62,22 @@ public partial class TextToolWindow : Window
         return w;
     }
 
-    /// <summary>Opens a window with <paramref name="text"/> and translates it right away.</summary>
-    public static TextToolWindow ShowTranslate(string text, Rect? near = null)
+    /// <summary>
+    /// Opens a window with <paramref name="text"/> and translates it right away. With <paramref name="rich"/>
+    /// (the item's HTML/RTF) the translation keeps the formatting and 复制译文 copies it formatted.
+    /// </summary>
+    public static TextToolWindow ShowTranslate(string text, Rect? near = null, System.Collections.Generic.IReadOnlyList<ClipFormat>? rich = null)
     {
         var w = new TextToolWindow { Title = "翻译" };
         w.Heading.Text = "翻译";
         w.Info.Text = $"{text.Length} 字";
         w.Source.Text = text;
+        if (rich != null && RichTranslator.Supports(rich.Select(f => f.Name).ToList()))
+        {
+            w._rich = rich;
+            w._richSource = text;
+            w.ShowRichMode(true);
+        }
         w.Place(near);
         w.Show();
         w.Activate();
@@ -144,8 +161,16 @@ public partial class TextToolWindow : Window
     void Source_TextChanged(object sender, TextChangedEventArgs e)
     {
         _translatedCurrent = false;
+        if (_rich != null) ShowRichMode(Source.Text == _richSource);
         CopySourceBtn.IsEnabled = Source.Text.Length > 0;
         CopySourceBtn.Opacity = CopySourceBtn.IsEnabled ? 1 : 0.5;
+    }
+
+    /// <summary>Rich mode while the source is the item's own text; editing it switches to plain translation.</summary>
+    void ShowRichMode(bool on)
+    {
+        Heading.Text = on ? "翻译富文本" : "翻译";
+        Info.Text = on ? $"{Source.Text.Length} 字 · 译文保留原来的格式（字体、颜色、表格、链接…）" : "原文改过了，按纯文本翻译";
     }
 
     async void Translate_Click(object sender, RoutedEventArgs e)
@@ -162,17 +187,31 @@ public partial class TextToolWindow : Window
         CopyResultBtn.IsEnabled = false;
         CopyResultBtn.Opacity = 0.5;
         TranslateBtn.IsEnabled = false;
+        _richResult = null;
+        CopyResultBtn.Content = "复制译文";
         try
         {
-            var to = Translator.Resolve(S.TranslateTarget, new[] { text });
-            var (r, engine) = await Translator.TranslateAsync(new[] { text }, to, cts.Token);
-            if (cts.IsCancellationRequested) return;
-            Result.Text = r[0];
+            if (_rich != null && text == _richSource)
+            {
+                var rr = await RichTranslator.TranslateAsync(_rich, S.TranslateTarget, cts.Token);
+                if (cts.IsCancellationRequested) return;
+                _richResult = rr;
+                Result.Text = rr.Text;
+                CopyResultBtn.Content = "复制译文（带格式）";
+                Status.Text = $"{rr.Engine} · 译为{Translator.NameOf(rr.Target)} · {rr.Segments} 段，格式已保留";
+            }
+            else
+            {
+                var to = Translator.Resolve(S.TranslateTarget, new[] { text });
+                var (r, engine) = await Translator.TranslateAsync(new[] { text }, to, cts.Token);
+                if (cts.IsCancellationRequested) return;
+                Result.Text = r[0];
+                Status.Text = $"{engine} · 译为{Translator.NameOf(to)}";
+            }
             ResultMessage.Visibility = Visibility.Collapsed;
             CopyResultBtn.IsEnabled = true;
             CopyResultBtn.Opacity = 1;
             _translatedCurrent = true;
-            Status.Text = $"{engine} · 译为{Translator.NameOf(to)}";
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -204,7 +243,14 @@ public partial class TextToolWindow : Window
     }
 
     void CopySource_Click(object sender, RoutedEventArgs e) => Copy(Source.Text, "已复制原文");
-    void CopyResult_Click(object sender, RoutedEventArgs e) => Copy(Result.Text, "已复制译文");
+    void CopyResult_Click(object sender, RoutedEventArgs e)
+    {
+        if (_richResult is not { } r) { Copy(Result.Text, "已复制译文"); return; }
+        // the translated HTML/RTF next to plain text: each app pastes the richest format it understands
+        var payload = new ClipboardWriter.Payload().Text(r.Text);
+        foreach (var f in r.Formats) payload.Bytes8(f.Name, f.Data);
+        Status.Text = ClipboardWriter.Write(payload) ? "已复制带格式的译文，粘贴到 Word、邮件、网页编辑器里会保留格式" : "复制失败，请再试一次";
+    }
 
     void Copy(string text, string done)
     {

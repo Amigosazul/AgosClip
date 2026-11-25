@@ -29,6 +29,7 @@ public partial class PinWindow : Window
     double _zoom = 1;
     int _x, _y;
     readonly DispatcherTimer _badgeTimer = new() { Interval = TimeSpan.FromMilliseconds(900) };
+    readonly DispatcherTimer _statusTimer = new() { Interval = TimeSpan.FromSeconds(4) };
 
     public bool OnTop { get; private set; }
     public double Zoom => _zoom;
@@ -60,8 +61,11 @@ public partial class PinWindow : Window
             else if (e.Key == Key.C && (Keyboard.Modifiers & ModifierKeys.Control) != 0) ScreenCapture.CopyToClipboard(_image);
         };
         _badgeTimer.Tick += (_, _) => { _badgeTimer.Stop(); ZoomBadge.Visibility = Visibility.Collapsed; };
+        _statusTimer.Tick += (_, _) => HideStatus();
+        LocationChanged += (_, _) => RepositionStatus();
+        SizeChanged += (_, _) => RepositionStatus();
         ContextMenu = BuildMenu();
-        Closed += (_, _) => { Open_.Remove(this); _translating?.Cancel(); };
+        Closed += (_, _) => { Open_.Remove(this); _translating?.Cancel(); HideStatus(); };
         ContextMenuOpening += (_, _) => RefreshMenu();
     }
 
@@ -176,34 +180,63 @@ public partial class PinWindow : Window
         Picture.Source = img;
     }
 
-    void Badge(string text, bool stay)
+    /// <summary>
+    /// Translation status in a pill outside the picture; <paramref name="busy"/> shows a spinning ring and keeps
+    /// it up, otherwise it goes away after a few seconds.
+    /// </summary>
+    void Status(string text, bool busy)
     {
-        ZoomText.Text = text;
-        ZoomBadge.Visibility = Visibility.Visible;
-        _badgeTimer.Stop();
-        if (!stay) { _badgeTimer.Interval = TimeSpan.FromSeconds(4); _badgeTimer.Start(); }
+        StatusText.Text = text;
+        Spinner.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        if (busy)
+            SpinnerTurn.BeginAnimation(System.Windows.Media.RotateTransform.AngleProperty,
+                new System.Windows.Media.Animation.DoubleAnimation(0, 360, TimeSpan.FromSeconds(0.9)) { RepeatBehavior = System.Windows.Media.Animation.RepeatBehavior.Forever });
+        else SpinnerTurn.BeginAnimation(System.Windows.Media.RotateTransform.AngleProperty, null);
+        StatusPop.IsOpen = true;
+        RepositionStatus();
+        _statusTimer.Stop();
+        if (!busy) _statusTimer.Start();
     }
+
+    void HideStatus()
+    {
+        _statusTimer.Stop();
+        SpinnerTurn.BeginAnimation(System.Windows.Media.RotateTransform.AngleProperty, null);
+        StatusPop.IsOpen = false;
+    }
+
+    /// <summary>A popup doesn't follow its window by itself: nudge it after the pin moves or is zoomed.</summary>
+    void RepositionStatus()
+    {
+        if (!StatusPop.IsOpen) return;
+        var o = StatusPop.HorizontalOffset;
+        StatusPop.HorizontalOffset = o + 0.01;
+        StatusPop.HorizontalOffset = o;
+    }
+
+    internal bool StatusBusy => StatusPop.IsOpen && Spinner.Visibility == Visibility.Visible;
+    internal string StatusMessage => StatusPop.IsOpen ? StatusText.Text : "";
 
     /// <summary>Recognises the text, translates it and shows the picture with the translation written in.</summary>
     public async void TranslateInPlace()
     {
         if (_translating != null) return;
-        if (!RapidOcr.Available) { Badge("请先在 设置 → 插件 里安装文字识别", false); return; }
+        if (!RapidOcr.Available) { Status("请先在 设置 → 插件 里安装文字识别", false); return; }
         _translating = new System.Threading.CancellationTokenSource();
-        Badge("正在翻译…", true);
+        Status("正在识别并翻译…", true);
         try
         {
             var r = await ImageTranslator.TranslateAsync(_original, App.Current.Settings.TranslateTarget, _translating.Token);
             _translated = r.Image;
             ShowImage(_translated);
-            Badge($"{r.Engine} · 译为{Translator.NameOf(r.Target)} · 右键可看原图", false);
+            Status($"{r.Engine} · 译为{Translator.NameOf(r.Target)} · 右键可看原图", false);
             App.Log($"pin translate: {r.Blocks} blocks via {r.Engine}");
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { HideStatus(); }
         catch (Exception ex)
         {
             App.Log("pin translate failed: " + ex.Message);
-            Badge("翻译失败：" + ex.Message, false);
+            Status("翻译失败：" + ex.Message, false);
         }
         finally { _translating = null; }
     }

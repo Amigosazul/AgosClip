@@ -677,6 +677,7 @@ public partial class PanelWindow : Window
         if (CalOpen) return HandleCalendarKey(key, ctrl);
         if ((key == Key.F2 || (key == Key.E && ctrl)) && Selected is { IsText: true } toEdit) { OpenEditor(toEdit); return true; }
         if (key == Key.Space && !_searchOpen && Selected is { } toPreview) { OpenPreview(toPreview); return true; }
+        if (key == Key.T && ctrl && Selected is { CanTranslate: true } toTranslate) { Translate(toTranslate.Item); return true; }
         bool searching = SearchBox.Text.Length > 0;
         switch (key)
         {
@@ -1026,6 +1027,23 @@ public partial class PanelWindow : Window
 
     ItemVm? _editing;
     internal bool EditOpen => EditOverlay.Visibility == Visibility.Visible;
+
+    void Translate_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: ItemVm { CanTranslate: true } vm }) { ItemList.SelectedItem = vm; Translate(vm.Item); }
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// Opens the translation window for a text item. Rich text (HTML/RTF) is translated with its formatting,
+    /// so 复制译文 puts a formatted translation on the clipboard.
+    /// </summary>
+    internal static TextToolWindow? Translate(ClipItem item)
+    {
+        if (item.Kind != ClipKind.Text || string.IsNullOrWhiteSpace(item.Text) || !App.Current.Settings.EnableTranslate) return null;
+        var rich = RichTranslator.Supports(item.Formats) ? Store.GetFormats(item.Id) : null;
+        return TextToolWindow.ShowTranslate(item.Text, null, rich);
+    }
 
     void Edit_Click(object sender, RoutedEventArgs e)
     {
