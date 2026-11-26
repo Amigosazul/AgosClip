@@ -72,6 +72,21 @@ internal static partial class SelfTest
             Check(Math.Abs(px[2] - 0xF4) < 6 && Math.Abs(px[1] - 0xF1) < 6 && Math.Abs(px[0] - 0xE8) < 6, $"image translate: cover-up uses the sampled background ({px[2]:X2}{px[1]:X2}{px[0]:X2})");
         }
 
+        // size and spacing come from the ink, not from the padded OCR boxes: 16 px text, rows 26 px apart, 30 px boxes
+        {
+            var para = Enumerable.Range(0, 4).Select(i => ($"Line {i} of a paragraph with ascenders and descenders, gjpqy", 20.0, 20.0 + i * 26, 16.0, Color.FromRgb(0x44, 0x44, 0x44))).ToList();
+            var ppic = TextPicture(600, 140, Colors.White, para);
+            var ppx = new byte[600 * 140 * 4];
+            new FormatConvertedBitmap(ppic, PixelFormats.Bgra32, null, 0).CopyPixels(ppx, 600 * 4, 0);
+            var plines = para.Select(p => new OcrLine(new Int32Rect(16, (int)p.Item3 - 4, 470, 30), p.Item1, 0.9f)).ToList();
+            var pb = ImageTranslator.Group(plines);
+            var pm = pb.Count == 1 ? ImageTranslator.Measure(ppx, 600, 140, pb[0], Colors.White, Color.FromRgb(0x44, 0x44, 0x44)) : null;
+            Check(pm != null && pm.Size >= 14.5 && pm.Size <= 17.5 && Math.Abs(pm.Pitch - 26) <= 1.5,
+                $"image translate: font size and line spacing measured from the ink (size {pm?.Size:0.0}, pitch {pm?.Pitch:0.0}; boxes say {30 * 0.72:0.0})");
+            var pr = ImageTranslator.Render(ppic, pb, new[] { "自测在版本升级之前运行并通过了。发布构建本身只经过了安装程序构建，该步骤已成功。您的桌面上尚未尝试任何新功能。" });
+            File.WriteAllBytes(Path.Combine(outDir, "translate-spacing.png"), ScreenCapture.Png(pr));
+        }
+
         // formatting: list items and short lines keep their own line, centred paragraphs stay centred, bold stays bold
         {
             var layout = new List<OcrLine>
@@ -186,6 +201,18 @@ internal static partial class SelfTest
         var found = Enumerable.Range(0, 40).Count(i => Squash(r3.Text).Contains($"Linenumber{i:00}"));
         var dupes = Enumerable.Range(0, 40).Count(i => System.Text.RegularExpressions.Regex.Matches(Squash(r3.Text), $"Linenumber{i:00}").Count > 1);
         Check(found >= 38 && dupes == 0, $"OCR: long picture read in strips ({found}/40 lines, {dupes} duplicated, {r3.Elapsed.TotalSeconds:0.0} s)");
+
+        // a real screenshot (AGOSCLIP_TRANSLATE_SAMPLE=png): OCR + layout with a fixed Chinese text, for eyeballing
+        if (Environment.GetEnvironmentVariable("AGOSCLIP_TRANSLATE_SAMPLE") is { Length: > 0 } sample && File.Exists(sample))
+        {
+            var sp = new PngBitmapDecoder(new Uri(Path.GetFullPath(sample)), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames[0];
+            var so = Wait(RapidOcr.RecognizeAsync(sp));
+            var sb = ImageTranslator.Group(so.Lines);
+            var zh = "自测在版本升级之前运行并通过了。发布构建本身只经过了安装程序构建，该步骤已成功。您的桌面上尚未尝试任何新功能。请检查几个真实截图翻译的格式，以及它们的翻译状态是否位于固定截图上方的正确位置。zhangle 上没有其他任务在运行。";
+            var sr = ImageTranslator.Render(sp, sb, sb.Select((b, i) => i == 0 ? zh : "译文" + i).ToList());
+            File.WriteAllBytes(Path.Combine(outDir, "translate-sample.png"), ScreenCapture.Png(sr));
+            Report.AppendLine($"     sample: {so.Lines.Count} lines → {sb.Count} blocks; {string.Join(" | ", so.Lines.Select(l => $"{l.Box.Y}+{l.Box.Height}"))}");
+        }
 
         // 4. picture translation end to end needs the network: opt-in
         if (Environment.GetEnvironmentVariable("AGOSCLIP_NET_TESTS") == "1")
