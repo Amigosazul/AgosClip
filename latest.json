@@ -1,9 +1,9 @@
 {
-  "version": "1.12.0",
-  "file": "AgosClip-Setup-1.12.0.exe",
-  "sha256": "64f593ea5928384403a32834b550e212d39ae08f82f1fb4c0662f84a8cda5f00",
-  "size": 53164583,
-  "notes": "## AgosClip 1.12.0\n\n### 新功能\n- **富文本翻译**：从网页、Word、WPS、邮件复制的带格式内容（卡片上标着“富文本”“表格”）会连格式一起翻译，只替换文字，加粗、颜色、链接、列表、表格都保持原样，代码块不翻译。点“复制译文（带格式）”后粘贴到 Word、邮件或网页编辑器里格式不变。\n- 翻译入口更多了：卡片上的翻译按钮、选中后按 **Ctrl+T**，或按空格预览后点“翻译”/按 T。\n\n### 改进\n- **图片翻译保留排版**：列表项、标题、菜单这类单独一行的文字翻译后仍然单独成行，不再被并成一整段；居中、右对齐的文字保持原来的对齐方式；原图里的粗体，译文也用粗体。\n- **钉图翻译的提示不再挡字**：“正在翻译”移到了钉图外面（上方，上面没地方时放在下方），并加了转圈动画；翻译完成几秒后自动消失。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.12.0/AgosClip-Setup-1.12.0.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.12.0/AgosClip-Setup-1.12.0.exe\n- https://ghproxy.net/https://github.com/Amigosazul/AgosClip/releases/download/v1.12.0/AgosClip-Setup-1.12.0.exe",
+  "version": "1.12.1",
+  "file": "AgosClip-Setup-1.12.1.exe",
+  "sha256": "6e44b885cc0571d907654883e41d2ab661f0e5c0698fd86b9b094fdc1aaf5409",
+  "size": 53142790,
+  "notes": "## AgosClip 1.12.1\n\n### 改进\n- **图片翻译的字号和行距和原图一致**：之前译文字偏大、行与行挤在一起。现在按原图文字的实际大小写译文，行距也跟原文一样，每行译文落在原来那一行的位置上。\n- **原文擦得更干净**：之前最后一行原文可能留下一点灰色残影，现在整段原文（包括 g、y 这类往下伸的笔画）都会盖住。\n\n**国内下载**\n- https://ghfast.top/https://github.com/Amigosazul/AgosClip/releases/download/v1.12.1/AgosClip-Setup-1.12.1.exe\n- https://gh-proxy.com/https://github.com/Amigosazul/AgosClip/releases/download/v1.12.1/AgosClip-Setup-1.12.1.exe\n- https://ghproxy.net/https://github.com/Amigosazul/AgosClip/releases/download/v1.12.1/AgosClip-Setup-1.12.1.exe",
   "mirrors": [
     "https://ghfast.top/",
     "https://gh-proxy.com/",
